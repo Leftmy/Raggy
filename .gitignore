@@ -2,7 +2,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
-.env
+.env*
+!.env.example
 .venv
 env/
 venv/
@@ -15,3 +16,13 @@ build/
 *.egg-info/
 qdrant_storage/
 data/
+*.log
+.idea/
+.vscode/
+*.swp
+htmlcov/
+.coverage
+.coverage.*
+.DS_Store
+Thumbs.db
+node_modules/

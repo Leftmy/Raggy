@@ -6,9 +6,13 @@ build-backend = "poetry.core.masonry.api"
 name = "rag-telegram-system"
 version = "0.1.0"
 description = "Domain-driven RAG system with FastAPI, Telegram Bot, Qdrant, FastEmbed, FlashRank, and Gemini 1.5 Pro"
-authors = ["Your Name <you@example.com>"]
 readme = "README.md"
 packages = [{include = "src"}]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Operating System :: OS Independent",
+]
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -41,3 +45,20 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[tool.black]
+target-version = ["py311"]
+line-length = 100
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+check_untyped_defs = false

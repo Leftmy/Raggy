@@ -1,3 +1,4 @@
+import threading
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
@@ -133,6 +134,79 @@ async def test_process_document_rejects_an_older_replacement(document_service, m
             place="Camp North",
             uploaded_at=datetime(2026, 10, 18, tzinfo=timezone.utc),
         )
+
+
+@pytest.mark.asyncio
+async def test_process_document_parses_file_off_event_loop(document_service):
+    event_loop_thread = threading.get_ident()
+    parser_thread = []
+    document_service.extract_text = lambda *_: (
+        parser_thread.append(threading.get_ident()) or "Sample content"
+    )
+
+    await document_service.process_and_index_document(
+        file_content=b"Sample content",
+        filename="test.txt",
+    )
+
+    assert parser_thread
+    assert parser_thread[0] != event_loop_thread
+
+
+@pytest.mark.asyncio
+async def test_process_document_embeds_chunks_in_bounded_batches(
+    document_service,
+    mock_vector_repo,
+    mock_embedding_service,
+    mock_splitter_service,
+):
+    mock_splitter_service.split_text.side_effect = [
+        ["P" * 1000],
+        [f"chunk-{idx}" for idx in range(17)],
+    ]
+    document_service.extract_text = lambda *_: "Sample content"
+    mock_embedding_service.embed_texts.side_effect = lambda texts: [
+        [0.1, 0.2, 0.3] for _ in texts
+    ]
+
+    response = await document_service.process_and_index_document(
+        file_content=b"Sample content",
+        filename="large.pdf",
+    )
+
+    assert response.total_chunks == 17
+    assert mock_embedding_service.embed_texts.call_count == 3
+    assert len(mock_embedding_service.embed_texts.call_args_list[0].args[0]) == 8
+    assert len(mock_embedding_service.embed_texts.call_args_list[1].args[0]) == 8
+    assert len(mock_embedding_service.embed_texts.call_args_list[2].args[0]) == 1
+    mock_vector_repo.save_chunks.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_process_document_reports_embedding_progress(document_service):
+    progress = AsyncMock()
+    document_service.extract_text = lambda *_: "Sample content"
+    document_service.splitter_service.split_text.side_effect = [
+        ["P" * 1000],
+        [f"chunk-{index}" for index in range(25)],
+    ]
+    document_service.embedding_service.embed_texts.side_effect = lambda texts: [
+        [0.1, 0.2, 0.3] for _ in texts
+    ]
+
+    await document_service.process_and_index_document(
+        file_content=b"Sample content",
+        filename="test.pdf",
+        progress_callback=progress,
+    )
+
+    batch_updates = [
+        call.args[0] for call in progress.await_args_list if "batch " in call.args[0]
+    ]
+    assert batch_updates == [
+        "Generating embeddings for test.pdf: batch 1/4.",
+        "Generating embeddings for test.pdf: batch 4/4.",
+    ]
 
 
 def test_related_subparagraph_stays_in_parent_context():

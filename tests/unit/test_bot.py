@@ -4,6 +4,7 @@ from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+from src.bot.formatting import code_entities_for_values
 from src.bot.handlers.documents import (
     UPLOAD_CAPTION_INSTRUCTIONS,
     handle_document_upload,
@@ -125,7 +126,11 @@ def test_document_upload_passes_sender_time_and_identity_to_indexer():
         )
     )
 
-    document_service.process_and_index_document.assert_awaited_once_with(
+    document_service.process_and_index_document.assert_awaited_once()
+    process_kwargs = document_service.process_and_index_document.await_args.kwargs
+    progress_callback = process_kwargs.pop("progress_callback")
+    assert callable(progress_callback)
+    assert process_kwargs == dict(
         file_content=b"document bytes",
         filename="contributions.pdf",
         document_title="Внески скарбника",
@@ -135,8 +140,25 @@ def test_document_upload_passes_sender_time_and_identity_to_indexer():
         uploaded_by_id=123,
         uploaded_at=timestamp,
     )
-    status_message.edit_text.assert_awaited_once()
+    assert status_message.edit_text.await_count >= 2
     confirmation = status_message.edit_text.await_args.args[0]
     assert "previous version was replaced" in confirmation
     assert "Sender: Owl" in confirmation
     assert "2026-10-19 18:49 UTC" in confirmation
+    filename_entities = status_message.edit_text.await_args.kwargs["entities"]
+    assert len(filename_entities) == 1
+    assert filename_entities[0].type == "code"
+    assert confirmation[
+        filename_entities[0].offset:filename_entities[0].offset + filename_entities[0].length
+    ] == "contributions.pdf"
+
+
+def test_code_entities_support_utf16_offsets_and_prevent_filename_linkification():
+    text = "🦉 File: README.md"
+
+    entities = code_entities_for_values(text, ["README.md"])
+
+    assert len(entities) == 1
+    assert entities[0].type == "code"
+    assert entities[0].offset == len("🦉 File: ".encode("utf-16-le")) // 2
+    assert entities[0].length == len("README.md".encode("utf-16-le")) // 2

@@ -22,7 +22,10 @@ def mock_text_embedding():
 def test_embed_texts_returns_float_vectors(mock_text_embedding):
     mock_cls, mock_instance = mock_text_embedding
     service = FastEmbedService(model_name="BAAI/bge-small-en-v1.5")
-    mock_cls.assert_called_once_with(model_name="BAAI/bge-small-en-v1.5")
+    mock_cls.assert_called_once_with(
+        model_name="BAAI/bge-small-en-v1.5",
+        threads=1,
+    )
     
     texts = ["First chunk", "Second chunk"]
     vectors = service.embed_texts(texts)
@@ -30,7 +33,7 @@ def test_embed_texts_returns_float_vectors(mock_text_embedding):
     assert len(vectors) == 2
     assert vectors[0] == [0.1, 0.2, 0.3]
     assert vectors[1] == [0.4, 0.5, 0.6]
-    mock_instance.embed.assert_called_once_with(texts)
+    mock_instance.embed.assert_called_once_with(texts, batch_size=8)
 
 
 def test_embed_texts_empty_returns_empty_list(mock_text_embedding):
@@ -56,4 +59,4 @@ def test_embed_query_returns_single_vector(mock_text_embedding):
     query_vector = service.embed_query("What is RAG?")
 
     assert query_vector == [0.1, 0.2, 0.3]
-    mock_instance.embed.assert_called_once_with(["What is RAG?"])
+    mock_instance.embed.assert_called_once_with(["What is RAG?"], batch_size=8)

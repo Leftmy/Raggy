@@ -3,7 +3,9 @@ import logging
 import unicodedata
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional
+from math import ceil
+from time import perf_counter
+from typing import Awaitable, Callable, List, Optional
 
 from src.core.exceptions import DocumentProcessingError
 from src.domains.documents.parsers import ParserFactory, sanitize_filename
@@ -13,6 +15,7 @@ from src.domains.documents.splitters import TextSplitterService
 from src.domains.rag.service import EmbeddingService
 
 logger = logging.getLogger(__name__)
+EMBEDDING_BATCH_SIZE = 8
 
 
 class DocumentService:
@@ -80,6 +83,7 @@ class DocumentService:
         uploaded_by_username: Optional[str] = None,
         uploaded_by_id: Optional[int] = None,
         uploaded_at: Optional[datetime] = None,
+        progress_callback: Optional[Callable[[str], Awaitable[None]]] = None,
     ) -> DocumentUploadResponse:
         """Parse, chunk, generate embeddings, and persist in vector repository."""
         filename = sanitize_filename(filename)
@@ -110,10 +114,20 @@ class DocumentService:
         if self.parent_chunk_size < selected_chunk_size:
             raise DocumentProcessingError("Parent chunk size must be at least the child chunk size")
         doc_id = document_id or str(uuid.uuid4())
-        raw_text = self.extract_text(file_content, filename)
+        stage_started = perf_counter()
+        raw_text = await asyncio.to_thread(self.extract_text, file_content, filename)
+        logger.info(
+            "Parsed document %s: %d characters in %.2f seconds",
+            filename,
+            len(raw_text),
+            perf_counter() - stage_started,
+        )
+        if progress_callback:
+            await progress_callback(f"Read {len(raw_text):,} characters from {filename}. Splitting text...")
         if not raw_text.strip():
             raise DocumentProcessingError("The document contains no extractable text")
 
+        stage_started = perf_counter()
         parent_child_chunks = await asyncio.to_thread(
             self.split_into_parent_child_chunks,
             raw_text,
@@ -126,9 +140,48 @@ class DocumentService:
             raise DocumentProcessingError(
                 f"The document exceeds the maximum of {self.max_chunks} chunks"
             )
+        logger.info(
+            "Split document %s into %d chunks in %.2f seconds",
+            filename,
+            len(parent_child_chunks),
+            perf_counter() - stage_started,
+        )
+        if progress_callback:
+            await progress_callback(
+                f"Split {filename} into {len(parent_child_chunks):,} chunks. Generating embeddings..."
+            )
 
         chunks_text = [child_content for _, _, child_content in parent_child_chunks]
-        embeddings = await asyncio.to_thread(self.embedding_service.embed_texts, chunks_text)
+        embeddings = []
+        batch_count = ceil(len(chunks_text) / EMBEDDING_BATCH_SIZE)
+        stage_started = perf_counter()
+        for batch_index, offset in enumerate(
+            range(0, len(chunks_text), EMBEDDING_BATCH_SIZE),
+            start=1,
+        ):
+            batch_embeddings = await asyncio.to_thread(
+                self.embedding_service.embed_texts,
+                chunks_text[offset:offset + EMBEDDING_BATCH_SIZE],
+            )
+            embeddings.extend(batch_embeddings)
+            if progress_callback and (
+                batch_index == 1 or batch_index % 10 == 0 or batch_index == batch_count
+            ):
+                await progress_callback(
+                    f"Generating embeddings for {filename}: batch {batch_index}/{batch_count}."
+                )
+            if batch_index == 1 or batch_index % 10 == 0 or batch_index == batch_count:
+                logger.info(
+                    "Embedded batch %d/%d for %s",
+                    batch_index,
+                    batch_count,
+                    filename,
+                )
+        logger.info(
+            "Generated embeddings for %s in %.2f seconds",
+            filename,
+            perf_counter() - stage_started,
+        )
         if len(embeddings) != len(chunks_text):
             raise DocumentProcessingError(
                 f"Embedding count ({len(embeddings)}) does not match chunk count ({len(chunks_text)})"
@@ -172,6 +225,7 @@ class DocumentService:
             )
 
         replaced_previous = False
+        stage_started = perf_counter()
         if document_title is not None and place is not None and uploaded_at is not None:
             accepted, replaced_previous = await self.vector_repository.replace_document(
                 document_chunks,
@@ -185,7 +239,13 @@ class DocumentService:
                 )
         else:
             await self.vector_repository.save_chunks(document_chunks)
-        logger.info("Indexed document %s with %d chunks", doc_id, len(document_chunks))
+        logger.info(
+            "Indexed document %s (%s) with %d chunks in %.2f seconds",
+            doc_id,
+            filename,
+            len(document_chunks),
+            perf_counter() - stage_started,
+        )
 
         return DocumentUploadResponse(
             document_id=doc_id,

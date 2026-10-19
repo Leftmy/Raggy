@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from qdrant_client.http import models as qmodels
 
 from src.core.exceptions import VectorStoreError
 from src.domains.documents.schemas import DocumentChunk
@@ -13,8 +15,16 @@ def mock_qdrant_client():
     client = MagicMock()
     # Mock collections check
     client.collection_exists = AsyncMock(return_value=True)
-    client.get_collection = AsyncMock()
+    client.get_collection = AsyncMock(
+        return_value=SimpleNamespace(
+            config=SimpleNamespace(
+                params=SimpleNamespace(vectors=MagicMock())
+            ),
+            payload_schema={},
+        )
+    )
     client.create_collection = AsyncMock(return_value=True)
+    client.create_payload_index = AsyncMock(return_value=True)
     client.upsert = AsyncMock(return_value=True)
     client.search = AsyncMock()
     client.delete = AsyncMock(return_value=True)
@@ -39,9 +49,23 @@ def repository(mock_qdrant_client):
 @pytest.mark.asyncio
 async def test_ensure_collection_exists_when_already_present(repository, mock_qdrant_client):
     mock_qdrant_client.collection_exists.return_value = True
+    mock_qdrant_client.get_collection.return_value = SimpleNamespace(
+        config=SimpleNamespace(
+            params=SimpleNamespace(
+                vectors=qmodels.VectorParams(size=384, distance=qmodels.Distance.COSINE)
+            )
+        ),
+        payload_schema={},
+    )
     await repository.ensure_collection(vector_size=384)
     mock_qdrant_client.collection_exists.assert_awaited_once_with(collection_name="test_collection")
     mock_qdrant_client.create_collection.assert_not_called()
+    mock_qdrant_client.create_payload_index.assert_awaited_once_with(
+        collection_name="test_collection",
+        field_name="filename",
+        field_schema=qmodels.PayloadSchemaType.KEYWORD,
+        wait=True,
+    )
 
 
 @pytest.mark.asyncio
@@ -50,6 +74,26 @@ async def test_ensure_collection_creates_when_missing(repository, mock_qdrant_cl
     await repository.ensure_collection(vector_size=384)
     mock_qdrant_client.collection_exists.assert_awaited_once_with(collection_name="test_collection")
     mock_qdrant_client.create_collection.assert_awaited_once()
+    mock_qdrant_client.create_payload_index.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ensure_collection_does_not_recreate_existing_filename_index(
+    repository,
+    mock_qdrant_client,
+):
+    mock_qdrant_client.get_collection.return_value = SimpleNamespace(
+        config=SimpleNamespace(
+            params=SimpleNamespace(
+                vectors=qmodels.VectorParams(size=384, distance=qmodels.Distance.COSINE)
+            )
+        ),
+        payload_schema={"filename": qmodels.PayloadSchemaType.KEYWORD},
+    )
+
+    await repository.ensure_collection(vector_size=384)
+
+    mock_qdrant_client.create_payload_index.assert_not_awaited()
 
 
 @pytest.mark.asyncio

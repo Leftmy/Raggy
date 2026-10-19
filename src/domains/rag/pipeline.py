@@ -1,9 +1,14 @@
 import asyncio
+import re
+import unicodedata
 from typing import List
 
 from src.domains.documents.repositories import VectorRepository
+from src.domains.documents.schemas import DocumentChunk
 from src.domains.rag.schemas import QueryRequest, QueryResponse, SearchResultChunk
 from src.domains.rag.service import EmbeddingService, LLMService, RerankerService
+
+_FILENAME_PATTERN = re.compile(r"(?<![\w.])[\w.-]+\.(?:pdf|docx|txt|md)\b", re.IGNORECASE)
 
 
 class RAGPipelineService:
@@ -36,6 +41,25 @@ class RAGPipelineService:
             top_k=request.top_k,
             filters=request.filter_metadata,
         )
+        seen_chunk_ids = {chunk.chunk_id for chunk in retrieved_chunks}
+        for filename in dict.fromkeys(_FILENAME_PATTERN.findall(request.query)):
+            filters = dict(request.filter_metadata or {})
+            if "filename" in filters and filters["filename"] != filename:
+                continue
+            filters["filename"] = filename
+            filename_chunks = await self.vector_repo.search(
+                query_vector=query_vector,
+                top_k=request.top_k,
+                filters=filters,
+            )
+            retrieved_chunks.extend(
+                chunk for chunk in filename_chunks if chunk.chunk_id not in seen_chunk_ids
+            )
+            seen_chunk_ids.update(chunk.chunk_id for chunk in filename_chunks)
+
+        explicit_targets = self._explicit_target_chunks(request.query, retrieved_chunks)
+        if explicit_targets:
+            retrieved_chunks = explicit_targets
 
         # Map DocumentChunk to SearchResultChunk for reranker
         chunks_by_id = {chunk.chunk_id: chunk for chunk in retrieved_chunks}
@@ -101,3 +125,32 @@ class RAGPipelineService:
             answer=answer,
             source_chunks=expanded_chunks,
         )
+
+    @staticmethod
+    def _explicit_target_chunks(
+        query: str,
+        chunks: List[DocumentChunk],
+    ) -> List[DocumentChunk]:
+        normalized_query = RAGPipelineService._normalize_target(query)
+        matching_chunks = []
+        for chunk in chunks:
+            target_values = (
+                chunk.metadata.get("filename"),
+                chunk.metadata.get("document_title"),
+            )
+            if any(
+                normalized_target
+                and f" {normalized_target} " in f" {normalized_query} "
+                for target in target_values
+                if target
+                for normalized_target in [
+                    RAGPipelineService._normalize_target(str(target))
+                ]
+            ):
+                matching_chunks.append(chunk)
+        return matching_chunks
+
+    @staticmethod
+    def _normalize_target(value: str) -> str:
+        normalized = unicodedata.normalize("NFKC", value).casefold()
+        return " ".join(re.sub(r"[^\w]+", " ", normalized).split())

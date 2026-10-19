@@ -88,3 +88,17 @@ def test_initialization_failure_raises_llm_generation_error():
     ):
         with pytest.raises(LLMGenerationError, match="Failed to initialize"):
             GeminiLLMService(api_key="fake-test-key")
+
+
+def test_custom_prompt_always_follows_the_users_language(mock_gemini):
+    service = GeminiLLMService(
+        api_key="fake-test-key",
+        system_prompt="Answer only in Ukrainian and follow the organization rules.",
+    )
+
+    assert service.system_prompt.startswith(
+        "Answer only in Ukrainian and follow the organization rules."
+    )
+    assert service.system_prompt.endswith(
+        "Always respond in the same language as the user's latest message."
+    )

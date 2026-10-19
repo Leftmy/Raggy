@@ -4,7 +4,9 @@ from typing import Optional
 
 from aiogram import F, Router, types
 from aiogram.enums import ContentType
+from aiogram.exceptions import TelegramAPIError
 
+from src.bot.formatting import code_entities_for_values
 from src.bot.handlers.base import is_authorized
 from src.core.config import Settings
 from src.core.exceptions import DocumentProcessingError
@@ -90,7 +92,11 @@ async def handle_document_upload(
         await message.answer(UPLOAD_CAPTION_INSTRUCTIONS)
         return
 
-    status_msg = await message.reply(f"Downloading and indexing: {file_name}...")
+    initial_status = f"Downloading and indexing: {file_name}..."
+    status_msg = await message.reply(
+        initial_status,
+        entities=code_entities_for_values(initial_status, [file_name]),
+    )
 
     try:
         # Download document buffer
@@ -100,6 +106,20 @@ async def handle_document_upload(
             if len(file_bytes) > settings.MAX_UPLOAD_SIZE_BYTES:
                 await status_msg.edit_text("The document exceeds the upload size limit.")
                 return
+
+            async def report_progress(text: str) -> None:
+                try:
+                    await status_msg.edit_text(
+                        text,
+                        entities=code_entities_for_values(text, [file_name]),
+                    )
+                except TelegramAPIError as progress_error:
+                    logger.warning(
+                        "Unable to update upload progress (%s)",
+                        type(progress_error).__name__,
+                    )
+
+            await report_progress(f"Downloaded {file_name}; extracting document text...")
             response = await document_service.process_and_index_document(
                 file_content=file_bytes,
                 filename=file_name,
@@ -109,6 +129,7 @@ async def handle_document_upload(
                 uploaded_by_username=sender.username,
                 uploaded_by_id=user_id,
                 uploaded_at=_utc_message_time(message),
+                progress_callback=report_progress,
             )
             action = (
                 "The previous version was replaced."
@@ -116,7 +137,7 @@ async def handle_document_upload(
                 else "Document successfully indexed into the knowledge base."
             )
             received_at = _utc_message_time(message).strftime("%Y-%m-%d %H:%M UTC")
-            await status_msg.edit_text(
+            confirmation = (
                 f"{action}\n"
                 f"Document: {upload_metadata['document_title']}\n"
                 f"Place: {upload_metadata['place']}\n"
@@ -125,12 +146,21 @@ async def handle_document_upload(
                 f"Received: {received_at}\n"
                 f"Total chunks: {response.total_chunks}"
             )
+            await status_msg.edit_text(
+                confirmation,
+                entities=code_entities_for_values(confirmation, [response.filename]),
+            )
         else:
             await status_msg.edit_text("Unable to retrieve the document. Please try again.")
     except DocumentProcessingError as exc:
         await status_msg.edit_text(str(exc))
     except Exception as exc:
-        logger.error("Document upload failed (%s)", type(exc).__name__)
+        logger.exception(
+            "Document upload failed for %s (%d bytes, %s)",
+            file_name,
+            len(file_bytes) if "file_bytes" in locals() else 0,
+            type(exc).__name__,
+        )
         await status_msg.edit_text("Unable to process the document. Please try again later.")
 
 

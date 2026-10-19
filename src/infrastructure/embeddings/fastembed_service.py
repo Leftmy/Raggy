@@ -1,3 +1,4 @@
+import threading
 from typing import List
 
 from fastembed import TextEmbedding
@@ -5,12 +6,18 @@ from fastembed import TextEmbedding
 from src.core.exceptions import EmbeddingError
 from src.domains.rag.service import EmbeddingService
 
+_INFERENCE_BATCH_SIZE = 8
+
 
 class FastEmbedService(EmbeddingService):
     def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5"):
         self.model_name = model_name
+        self._inference_lock = threading.Lock()
         try:
-            self._model: TextEmbedding = TextEmbedding(model_name=self.model_name)
+            self._model: TextEmbedding = TextEmbedding(
+                model_name=self.model_name,
+                threads=1,
+            )
         except Exception as exc:
             raise EmbeddingError("Failed to initialize the embedding model") from exc
 
@@ -18,7 +25,11 @@ class FastEmbedService(EmbeddingService):
         if not texts:
             return []
         try:
-            return [list(vec) for vec in self._model.embed(texts)]
+            with self._inference_lock:
+                return [
+                    list(vec)
+                    for vec in self._model.embed(texts, batch_size=_INFERENCE_BATCH_SIZE)
+                ]
         except Exception as exc:
             raise EmbeddingError("Failed to generate text embeddings") from exc
 

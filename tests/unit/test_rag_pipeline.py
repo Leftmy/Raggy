@@ -32,7 +32,51 @@ def test_source_citation_includes_document_place_sender_and_upload_time():
     assert "North Camp" in citation
     assert "fall-guide.pdf" in citation
     assert "Owl" in citation
-    assert "2026-10-19 18:49 UTC" in citation
+    assert "19.10.2026 о 18:49 UTC" in citation
+
+
+def test_telegram_sources_are_deduplicated_and_human_readable():
+    from src.bot.handlers.queries import format_source_citations
+
+    first_chunk = SearchResultChunk(
+        chunk_id="parent-1",
+        document_id="doc-1",
+        content="First passage",
+        score=0.98,
+        metadata={
+            "filename": "idea.docx",
+            "document_title": "Ідея1",
+            "place": "Рукавичка №8",
+            "uploaded_by": "Олег",
+            "uploaded_by_username": "LeftmyVEVO",
+            "uploaded_at": "2026-10-19T21:07:00+00:00",
+        },
+    )
+    duplicate_chunk = first_chunk.model_copy(
+        update={"chunk_id": "parent-2", "content": "Second passage"}
+    )
+
+    citations = format_source_citations([first_chunk, duplicate_chunk])
+
+    assert citations.count("Ідея1") == 1
+    assert "Used sources:" in citations
+    assert "Надіслав: Олег (@LeftmyVEVO)" in citations
+    assert "Отримано: 19.10.2026 о 21:07 UTC" in citations
+    assert "**" not in citations
+    assert "```" not in citations
+
+
+def test_telegram_answer_converts_common_markdown_to_plain_text():
+    from src.bot.handlers.queries import format_answer_for_telegram
+
+    answer = format_answer_for_telegram(
+        "### Мета\n\n**Висновок**\n\n---\n- Перший пункт\n- Другий пункт"
+    )
+
+    assert answer == "Мета\n\nВисновок\n\n• Перший пункт\n• Другий пункт"
+    assert "**" not in answer
+    assert "###" not in answer
+    assert "---" not in answer
 
 
 @pytest.fixture
@@ -127,6 +171,89 @@ async def test_execute_query_when_no_documents_found_does_not_call_llm(mock_depe
     assert "couldn't find relevant information" in response.answer
     assert response.source_chunks == []
     llm_service.generate_response.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_explicit_filename_search_retrieves_document_outside_vector_top_k(
+    mock_dependencies,
+):
+    vector_repo = mock_dependencies["vector_repo"]
+    reranker_service = mock_dependencies["reranker_service"]
+    unrelated = DocumentChunk(
+        chunk_id="idea-chunk",
+        document_id="idea-doc",
+        content="An unrelated architecture idea.",
+        metadata={"filename": "idea.docx", "document_title": "Ідея1"},
+        score=0.8,
+    )
+    target = DocumentChunk(
+        chunk_id="readme-chunk",
+        document_id="readme-doc",
+        content="FastAPI Auth Service documentation.",
+        metadata={"filename": "README.md", "document_title": "FastAPI Auth Service"},
+        score=0.7,
+    )
+    vector_repo.search.side_effect = [[unrelated], [target]]
+    reranker_service.rerank.return_value = [
+        SearchResultChunk(
+            chunk_id="readme-chunk",
+            document_id="readme-doc",
+            content=target.content,
+            score=0.95,
+            metadata=target.metadata,
+        )
+    ]
+
+    await RAGPipelineService(**mock_dependencies).execute_query(
+        QueryRequest(query="Розкажи про README.md з Рукавички №8", top_k=5)
+    )
+
+    assert vector_repo.search.await_count == 2
+    assert vector_repo.search.await_args_list[1].kwargs["filters"] == {
+        "filename": "README.md"
+    }
+    reranked_documents = reranker_service.rerank.call_args.kwargs["documents"]
+    assert [chunk.document_id for chunk in reranked_documents] == ["readme-doc"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_document_title_excludes_unrelated_vector_candidates(
+    mock_dependencies,
+):
+    vector_repo = mock_dependencies["vector_repo"]
+    reranker_service = mock_dependencies["reranker_service"]
+    vector_repo.search.return_value = [
+        DocumentChunk(
+            chunk_id="idea-chunk",
+            document_id="idea-doc",
+            content="Architecture idea.",
+            metadata={"filename": "idea.docx", "document_title": "Ідея1"},
+            score=0.9,
+        ),
+        DocumentChunk(
+            chunk_id="coderabbit-chunk",
+            document_id="coderabbit-doc",
+            content="CodeRabbit reviews pull requests.",
+            metadata={"filename": "test.txt", "document_title": "CodeRabbit"},
+            score=0.8,
+        ),
+    ]
+    reranker_service.rerank.return_value = [
+        SearchResultChunk(
+            chunk_id="coderabbit-chunk",
+            document_id="coderabbit-doc",
+            content="CodeRabbit reviews pull requests.",
+            score=0.9,
+            metadata={"filename": "test.txt", "document_title": "CodeRabbit"},
+        )
+    ]
+
+    await RAGPipelineService(**mock_dependencies).execute_query(
+        QueryRequest(query="Розкажи про документ CodeRabbit")
+    )
+
+    reranked_documents = reranker_service.rerank.call_args.kwargs["documents"]
+    assert [chunk.document_id for chunk in reranked_documents] == ["coderabbit-doc"]
 
 
 @pytest.mark.asyncio

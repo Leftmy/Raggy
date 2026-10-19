@@ -54,6 +54,7 @@ class QdrantVectorRepository(VectorRepository):
                     raise VectorStoreError(
                         f"Collection vector size is {vectors.size}; model produced {vector_size}"
                     )
+                payload_schema = collection.payload_schema or {}
             else:
                 await client.create_collection(
                     collection_name=self.collection_name,
@@ -63,6 +64,14 @@ class QdrantVectorRepository(VectorRepository):
                     ),
                 )
                 logger.info("Created Qdrant collection '%s' with vector size %d", self.collection_name, vector_size)
+                payload_schema = {}
+            if "filename" not in payload_schema:
+                await client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="filename",
+                    field_schema=qmodels.PayloadSchemaType.KEYWORD,
+                    wait=True,
+                )
             return True
         except Exception as e:
             logger.error("Error ensuring Qdrant collection '%s' (%s)", self.collection_name, type(e).__name__)
@@ -249,6 +258,7 @@ class QdrantVectorRepository(VectorRepository):
             raise ValueError("top_k must be greater than zero")
         client = self.get_client()
         try:
+            await self.ensure_collection(vector_size=len(query_vector))
             query_filter = None
             if filters:
                 if any(isinstance(value, (dict, list, set)) for value in filters.values()):

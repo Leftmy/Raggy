@@ -1,8 +1,10 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from src.core.exceptions import VectorStoreError
 from src.domains.documents.schemas import DocumentChunk
 from src.infrastructure.qdrant.repository import QdrantVectorRepository
-from src.core.exceptions import VectorStoreError
 
 
 @pytest.fixture
@@ -10,6 +12,7 @@ def mock_qdrant_client():
     client = MagicMock()
     # Mock collections check
     client.collection_exists = AsyncMock(return_value=True)
+    client.get_collection = AsyncMock()
     client.create_collection = AsyncMock(return_value=True)
     client.upsert = AsyncMock(return_value=True)
     client.search = AsyncMock()
@@ -19,13 +22,16 @@ def mock_qdrant_client():
 
 @pytest.fixture
 def repository(mock_qdrant_client):
-    repo = QdrantVectorRepository(
-        host="localhost",
-        port=6333,
-        collection_name="test_collection",
-        api_key=None,
-    )
-    repo._client = mock_qdrant_client
+    with patch(
+        "src.infrastructure.qdrant.repository.AsyncQdrantClient",
+        return_value=mock_qdrant_client,
+    ):
+        repo = QdrantVectorRepository(
+            host="localhost",
+            port=6333,
+            collection_name="test_collection",
+            api_key=None,
+        )
     return repo
 
 
@@ -67,6 +73,23 @@ async def test_save_chunks_success(repository, mock_qdrant_client):
     result = await repository.save_chunks(chunks)
     assert result is True
     mock_qdrant_client.upsert.assert_awaited_once()
+    saved_point = mock_qdrant_client.upsert.await_args.kwargs["points"][0]
+    assert saved_point.payload["content"] == "Hello Qdrant world"
+
+
+@pytest.mark.asyncio
+async def test_save_chunks_batches_large_documents(repository, mock_qdrant_client):
+    chunks = [
+        DocumentChunk(
+            chunk_id=f"doc1_{idx}",
+            document_id="doc1",
+            content=f"chunk {idx}",
+            embedding=[0.1, 0.2, 0.3],
+        )
+        for idx in range(129)
+    ]
+    await repository.save_chunks(chunks)
+    assert mock_qdrant_client.upsert.await_count == 2
 
 
 @pytest.mark.asyncio

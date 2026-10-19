@@ -83,7 +83,7 @@ async def test_execute_query_full_pipeline_flow(mock_dependencies):
 
 
 @pytest.mark.asyncio
-async def test_execute_query_when_no_documents_found(mock_dependencies):
+async def test_execute_query_when_no_documents_found_does_not_call_llm(mock_dependencies):
     vector_repo = mock_dependencies["vector_repo"]
     reranker_service = mock_dependencies["reranker_service"]
     llm_service = mock_dependencies["llm_service"]
@@ -96,9 +96,6 @@ async def test_execute_query_when_no_documents_found(mock_dependencies):
 
     response = await pipeline.execute_query(request)
 
-    assert response.answer == "Synthesized RAG Answer"
+    assert "couldn't find relevant information" in response.answer
     assert response.source_chunks == []
-    llm_service.generate_response.assert_awaited_once_with(
-        query="Unknown question",
-        context_chunks=[],
-    )
+    llm_service.generate_response.assert_not_awaited()

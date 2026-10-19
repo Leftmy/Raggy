@@ -1,8 +1,10 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from src.core.exceptions import LLMGenerationError
 from src.domains.rag.schemas import SearchResultChunk
 from src.infrastructure.llm.gemini_service import GeminiLLMService
-from src.core.exceptions import LLMGenerationError
 
 
 @pytest.fixture
@@ -40,6 +42,11 @@ def mock_gemini():
 async def test_generate_response_constructs_prompt_and_returns_text(mock_gemini, sample_chunks):
     mock_cls, mock_instance = mock_gemini
     service = GeminiLLMService(api_key="fake-test-key", model_name="gemini-1.5-pro")
+    mock_cls.assert_called_once_with(
+        model="gemini-1.5-pro",
+        google_api_key="fake-test-key",
+        temperature=0.2,
+    )
 
     response = await service.generate_response(
         query="What is FastEmbed?",
@@ -72,3 +79,12 @@ async def test_generate_response_error_raises_llm_generation_error(mock_gemini, 
     service = GeminiLLMService(api_key="fake-test-key")
     with pytest.raises(LLMGenerationError):
         await service.generate_response(query="Any query", context_chunks=sample_chunks)
+
+
+def test_initialization_failure_raises_llm_generation_error():
+    with patch(
+        "src.infrastructure.llm.gemini_service.ChatGoogleGenerativeAI",
+        side_effect=RuntimeError("invalid client configuration"),
+    ):
+        with pytest.raises(LLMGenerationError, match="Failed to initialize"):
+            GeminiLLMService(api_key="fake-test-key")

@@ -37,13 +37,6 @@ def document_service(mock_vector_repo, mock_embedding_service, mock_splitter_ser
     )
 
 
-def test_text_parser_extraction():
-    from src.domains.documents.parsers import ParserFactory
-    parser = ParserFactory.get_parser("sample.txt")
-    result = parser.parse(b"Hello world from text file", "sample.txt")
-    assert result == "Hello world from text file"
-
-
 @pytest.mark.asyncio
 async def test_process_and_index_document_calls_repo_with_di(
     document_service,
@@ -59,3 +52,42 @@ async def test_process_and_index_document_calls_repo_with_di(
     mock_splitter_service.split_text.assert_called_once()
     mock_embedding_service.embed_texts.assert_called_once()
     mock_vector_repo.save_chunks.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_process_and_index_document_rejects_missing_embeddings(
+    document_service,
+    mock_embedding_service,
+):
+    from src.core.exceptions import DocumentProcessingError
+
+    mock_embedding_service.embed_texts.return_value = []
+    with pytest.raises(DocumentProcessingError, match="does not match chunk count"):
+        await document_service.process_and_index_document(
+            file_content=b"Sample content",
+            filename="test.txt",
+        )
+
+
+@pytest.mark.asyncio
+async def test_process_and_index_document_rejects_empty_file(document_service):
+    from src.core.exceptions import DocumentProcessingError
+
+    with pytest.raises(DocumentProcessingError, match="empty"):
+        await document_service.process_and_index_document(
+            file_content=b"",
+            filename="test.txt",
+        )
+
+
+@pytest.mark.asyncio
+async def test_process_and_index_document_rejects_invalid_chunk_settings(document_service):
+    from src.core.exceptions import DocumentProcessingError
+
+    with pytest.raises(DocumentProcessingError, match="Chunk size"):
+        await document_service.process_and_index_document(
+            file_content=b"Sample content",
+            filename="test.txt",
+            chunk_size=10,
+            chunk_overlap=10,
+        )

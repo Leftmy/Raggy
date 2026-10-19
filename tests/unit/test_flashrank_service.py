@@ -1,5 +1,8 @@
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
+
+from src.core.exceptions import RerankerError
 from src.domains.rag.schemas import SearchResultChunk
 from src.infrastructure.rerankers.flashrank_service import FlashRankReranker
 
@@ -41,6 +44,7 @@ def test_rerank_sorts_by_relevance_score(mock_flashrank, sample_candidates):
     mock_cls, mock_instance = mock_flashrank
     reranker = FlashRankReranker(model_name="ms-marco-TinyBERT-L-2-v2")
 
+    mock_cls.assert_called_once_with(model_name="ms-marco-TinyBERT-L-2-v2")
     reranked = reranker.rerank(query="What is artificial intelligence?", documents=sample_candidates, top_n=2)
 
     assert len(reranked) == 2
@@ -58,7 +62,16 @@ def test_rerank_limits_to_top_n(mock_flashrank, sample_candidates):
     assert reranked[0].chunk_id == "chunk_2"
 
 
-def test_rerank_empty_candidates():
+def test_rerank_empty_candidates(mock_flashrank):
     reranker = FlashRankReranker()
     reranked = reranker.rerank(query="test", documents=[], top_n=3)
     assert reranked == []
+
+
+def test_initialization_failure_raises_reranker_error():
+    with patch(
+        "src.infrastructure.rerankers.flashrank_service.Ranker",
+        side_effect=RuntimeError("model unavailable"),
+    ):
+        with pytest.raises(RerankerError, match="Failed to initialize"):
+            FlashRankReranker()

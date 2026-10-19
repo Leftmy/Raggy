@@ -1,6 +1,7 @@
 import logging
 import uuid
 from datetime import datetime, timezone
+from time import monotonic
 from typing import Any, List, Optional
 
 from qdrant_client import AsyncQdrantClient
@@ -25,6 +26,8 @@ class QdrantVectorRepository(VectorRepository):
         self.port = port
         self.collection_name = collection_name
         self.api_key = api_key
+        self._document_identity_cache: Optional[dict[str, str]] = None
+        self._document_identity_cache_expires_at = 0.0
         self._client = AsyncQdrantClient(
             host=self.host,
             port=self.port,
@@ -65,13 +68,14 @@ class QdrantVectorRepository(VectorRepository):
                 )
                 logger.info("Created Qdrant collection '%s' with vector size %d", self.collection_name, vector_size)
                 payload_schema = {}
-            if "filename" not in payload_schema:
-                await client.create_payload_index(
-                    collection_name=self.collection_name,
-                    field_name="filename",
-                    field_schema=qmodels.PayloadSchemaType.KEYWORD,
-                    wait=True,
-                )
+            for field_name in ("filename", "document_identity_key"):
+                if field_name not in payload_schema:
+                    await client.create_payload_index(
+                        collection_name=self.collection_name,
+                        field_name=field_name,
+                        field_schema=qmodels.PayloadSchemaType.KEYWORD,
+                        wait=True,
+                    )
             return True
         except Exception as e:
             logger.error("Error ensuring Qdrant collection '%s' (%s)", self.collection_name, type(e).__name__)
@@ -133,6 +137,17 @@ class QdrantVectorRepository(VectorRepository):
                         collection_name=self.collection_name,
                         points=points[offset:offset + batch_size],
                         wait=True,
+                    )
+                if self._document_identity_cache is not None:
+                    self._document_identity_cache.update(
+                        {
+                            str(chunk.metadata["document_identity_key"]): str(
+                                chunk.metadata["document_title"]
+                            )
+                            for chunk in chunks
+                            if chunk.metadata.get("document_identity_key")
+                            and chunk.metadata.get("document_title")
+                        }
                     )
             return True
         except Exception as e:
@@ -240,6 +255,7 @@ class QdrantVectorRepository(VectorRepository):
                     points_selector=superseded_filter,
                     wait=True,
                 )
+                self._document_identity_cache = None
             return True, bool(existing_document_ids)
         except Exception as e:
             logger.error("Failed to replace document version (%s)", type(e).__name__)
@@ -306,6 +322,42 @@ class QdrantVectorRepository(VectorRepository):
             logger.error("Failed to execute vector search (%s)", type(e).__name__)
             raise VectorStoreError("Vector search failed") from e
 
+    async def find_document_identities(self) -> dict[str, str]:
+        if (
+            self._document_identity_cache is not None
+            and monotonic() < self._document_identity_cache_expires_at
+        ):
+            return self._document_identity_cache.copy()
+
+        client = self.get_client()
+        identities: dict[str, str] = {}
+        offset = None
+        try:
+            while True:
+                points, next_offset = await client.scroll(
+                    collection_name=self.collection_name,
+                    limit=512,
+                    with_payload=["document_identity_key", "document_title"],
+                    with_vectors=False,
+                    offset=offset,
+                )
+                for point in points:
+                    payload = point.payload or {}
+                    identity_key = payload.get("document_identity_key")
+                    title = payload.get("document_title")
+                    if identity_key and title:
+                        identities[str(identity_key)] = str(title)
+                if next_offset is None:
+                    break
+                offset = next_offset
+        except Exception as e:
+            logger.error("Failed to load document identities from Qdrant (%s)", type(e).__name__)
+            raise VectorStoreError("Failed to load document identities") from e
+
+        self._document_identity_cache = identities
+        self._document_identity_cache_expires_at = monotonic() + 60
+        return identities.copy()
+
     async def delete_by_document_id(self, document_id: str) -> bool:
         """Remove all points belonging to a specific document."""
         client = self.get_client()
@@ -323,6 +375,7 @@ class QdrantVectorRepository(VectorRepository):
                 points_selector=delete_filter,
                 wait=True,
             )
+            self._document_identity_cache = None
             return True
         except Exception as e:
             logger.error("Failed to delete document '%s' (%s)", document_id, type(e).__name__)

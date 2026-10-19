@@ -36,26 +36,44 @@ class RAGPipelineService:
         query_vector = await asyncio.to_thread(self.embedding_service.embed_query, request.query)
 
         # 2. Vector search candidates
-        retrieved_chunks = await self.vector_repo.search(
-            query_vector=query_vector,
-            top_k=request.top_k,
-            filters=request.filter_metadata,
+        document_identities = await self.vector_repo.find_document_identities()
+        mentioned_document_keys = self._mentioned_document_keys(
+            request.query,
+            document_identities,
         )
-        seen_chunk_ids = {chunk.chunk_id for chunk in retrieved_chunks}
-        for filename in dict.fromkeys(_FILENAME_PATTERN.findall(request.query)):
-            filters = dict(request.filter_metadata or {})
-            if "filename" in filters and filters["filename"] != filename:
-                continue
-            filters["filename"] = filename
-            filename_chunks = await self.vector_repo.search(
+        if mentioned_document_keys:
+            retrieved_chunks = []
+            for identity_key in mentioned_document_keys:
+                filters = dict(request.filter_metadata or {})
+                filters["document_identity_key"] = identity_key
+                retrieved_chunks.extend(
+                    await self.vector_repo.search(
+                        query_vector=query_vector,
+                        top_k=request.top_k,
+                        filters=filters,
+                    )
+                )
+        else:
+            retrieved_chunks = await self.vector_repo.search(
                 query_vector=query_vector,
                 top_k=request.top_k,
-                filters=filters,
+                filters=request.filter_metadata,
             )
-            retrieved_chunks.extend(
-                chunk for chunk in filename_chunks if chunk.chunk_id not in seen_chunk_ids
-            )
-            seen_chunk_ids.update(chunk.chunk_id for chunk in filename_chunks)
+            seen_chunk_ids = {chunk.chunk_id for chunk in retrieved_chunks}
+            for filename in dict.fromkeys(_FILENAME_PATTERN.findall(request.query)):
+                filters = dict(request.filter_metadata or {})
+                if "filename" in filters and filters["filename"] != filename:
+                    continue
+                filters["filename"] = filename
+                filename_chunks = await self.vector_repo.search(
+                    query_vector=query_vector,
+                    top_k=request.top_k,
+                    filters=filters,
+                )
+                retrieved_chunks.extend(
+                    chunk for chunk in filename_chunks if chunk.chunk_id not in seen_chunk_ids
+                )
+                seen_chunk_ids.update(chunk.chunk_id for chunk in filename_chunks)
 
         explicit_targets = self._explicit_target_chunks(request.query, retrieved_chunks)
         if explicit_targets:
@@ -154,3 +172,22 @@ class RAGPipelineService:
     def _normalize_target(value: str) -> str:
         normalized = unicodedata.normalize("NFKC", value).casefold()
         return " ".join(re.sub(r"[^\w]+", " ", normalized).split())
+
+    @staticmethod
+    def _normalize_identity(value: str) -> str:
+        normalized = unicodedata.normalize("NFKC", value)
+        return " ".join(normalized.split()).casefold()
+
+    @staticmethod
+    def _mentioned_document_keys(
+        query: str,
+        identities: dict[str, str],
+    ) -> list[str]:
+        normalized_query = RAGPipelineService._normalize_target(query)
+        matches = [
+            identity_key
+            for identity_key, title in identities.items()
+            if (normalized_title := RAGPipelineService._normalize_target(title))
+            and f" {normalized_title} " in f" {normalized_query} "
+        ]
+        return matches

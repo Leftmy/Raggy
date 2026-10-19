@@ -38,6 +38,11 @@ class VectorRepository(ABC):
         pass
 
     @abstractmethod
+    async def find_document_identities(self) -> dict[str, str]:
+        """Return indexed document identity keys mapped to their display titles."""
+        pass
+
+    @abstractmethod
     async def delete_by_document_id(self, document_id: str) -> bool:
         """Remove document vectors from storage."""
         pass

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 from qdrant_client.http import models as qmodels
@@ -27,6 +27,7 @@ def mock_qdrant_client():
     client.create_payload_index = AsyncMock(return_value=True)
     client.upsert = AsyncMock(return_value=True)
     client.search = AsyncMock()
+    client.scroll = AsyncMock(return_value=([], None))
     client.delete = AsyncMock(return_value=True)
     return client
 
@@ -60,11 +61,21 @@ async def test_ensure_collection_exists_when_already_present(repository, mock_qd
     await repository.ensure_collection(vector_size=384)
     mock_qdrant_client.collection_exists.assert_awaited_once_with(collection_name="test_collection")
     mock_qdrant_client.create_collection.assert_not_called()
-    mock_qdrant_client.create_payload_index.assert_awaited_once_with(
-        collection_name="test_collection",
-        field_name="filename",
-        field_schema=qmodels.PayloadSchemaType.KEYWORD,
-        wait=True,
+    mock_qdrant_client.create_payload_index.assert_has_awaits(
+        [
+            call(
+                collection_name="test_collection",
+                field_name="filename",
+                field_schema=qmodels.PayloadSchemaType.KEYWORD,
+                wait=True,
+            ),
+            call(
+                collection_name="test_collection",
+                field_name="document_identity_key",
+                field_schema=qmodels.PayloadSchemaType.KEYWORD,
+                wait=True,
+            ),
+        ]
     )
 
 
@@ -74,11 +85,11 @@ async def test_ensure_collection_creates_when_missing(repository, mock_qdrant_cl
     await repository.ensure_collection(vector_size=384)
     mock_qdrant_client.collection_exists.assert_awaited_once_with(collection_name="test_collection")
     mock_qdrant_client.create_collection.assert_awaited_once()
-    mock_qdrant_client.create_payload_index.assert_awaited_once()
+    assert mock_qdrant_client.create_payload_index.await_count == 2
 
 
 @pytest.mark.asyncio
-async def test_ensure_collection_does_not_recreate_existing_filename_index(
+async def test_ensure_collection_does_not_recreate_existing_payload_indexes(
     repository,
     mock_qdrant_client,
 ):
@@ -88,7 +99,10 @@ async def test_ensure_collection_does_not_recreate_existing_filename_index(
                 vectors=qmodels.VectorParams(size=384, distance=qmodels.Distance.COSINE)
             )
         ),
-        payload_schema={"filename": qmodels.PayloadSchemaType.KEYWORD},
+        payload_schema={
+            "filename": qmodels.PayloadSchemaType.KEYWORD,
+            "document_identity_key": qmodels.PayloadSchemaType.KEYWORD,
+        },
     )
 
     await repository.ensure_collection(vector_size=384)
@@ -188,6 +202,33 @@ async def test_search_success(repository, mock_qdrant_client):
     assert results[0].parent_content == "Parent content with surrounding context."
     assert "parent_content" not in results[0].metadata
     mock_qdrant_client.search.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_find_document_identities_returns_and_caches_unique_titles(
+    repository,
+    mock_qdrant_client,
+):
+    point = MagicMock(
+        payload={
+            "document_identity_key": "coderabbit",
+            "document_title": "CodeRabbit",
+        }
+    )
+    duplicate = MagicMock(
+        payload={
+            "document_identity_key": "coderabbit",
+            "document_title": "CodeRabbit",
+        }
+    )
+    mock_qdrant_client.scroll.return_value = ([point, duplicate], None)
+
+    first = await repository.find_document_identities()
+    second = await repository.find_document_identities()
+
+    assert first == {"coderabbit": "CodeRabbit"}
+    assert second == first
+    mock_qdrant_client.scroll.assert_awaited_once()
 
 
 @pytest.mark.asyncio

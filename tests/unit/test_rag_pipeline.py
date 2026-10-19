@@ -83,6 +83,7 @@ def test_telegram_answer_converts_common_markdown_to_plain_text():
 def mock_dependencies():
     vector_repo = MagicMock(spec=VectorRepository)
     vector_repo.search = AsyncMock()
+    vector_repo.find_document_identities = AsyncMock(return_value={})
 
     embedding_service = MagicMock(spec=EmbeddingService)
     embedding_service.embed_query = MagicMock(return_value=[0.1, 0.2, 0.3])
@@ -222,6 +223,10 @@ async def test_explicit_document_title_excludes_unrelated_vector_candidates(
 ):
     vector_repo = mock_dependencies["vector_repo"]
     reranker_service = mock_dependencies["reranker_service"]
+    vector_repo.find_document_identities.return_value = {
+        "coderabbit": "CodeRabbit",
+        "idea1": "Ідея1",
+    }
     vector_repo.search.return_value = [
         DocumentChunk(
             chunk_id="idea-chunk",
@@ -248,12 +253,88 @@ async def test_explicit_document_title_excludes_unrelated_vector_candidates(
         )
     ]
 
-    await RAGPipelineService(**mock_dependencies).execute_query(
-        QueryRequest(query="Розкажи про документ CodeRabbit")
+    for query in (
+        "Розкажи про документ CodeRabbit",
+        "Tell me more about CodeRabbit",
+    ):
+        await RAGPipelineService(**mock_dependencies).execute_query(
+            QueryRequest(query=query)
+        )
+
+    assert vector_repo.search.await_count == 2
+    assert all(
+        search.kwargs["filters"] == {"document_identity_key": "coderabbit"}
+        for search in vector_repo.search.await_args_list
+    )
+    assert all(
+        [chunk.document_id for chunk in call.kwargs["documents"]] == ["coderabbit-doc"]
+        for call in reranker_service.rerank.call_args_list
     )
 
+
+@pytest.mark.asyncio
+async def test_explicit_document_title_search_finds_target_when_semantic_search_misses_it(
+    mock_dependencies,
+):
+    vector_repo = mock_dependencies["vector_repo"]
+    reranker_service = mock_dependencies["reranker_service"]
+    vector_repo.find_document_identities.return_value = {"coderabbit": "CodeRabbit"}
+    target = DocumentChunk(
+        chunk_id="coderabbit-chunk",
+        document_id="coderabbit-doc",
+        content="CodeRabbit reviews pull requests using AI.",
+        metadata={
+            "filename": "test.txt",
+            "document_title": "CodeRabbit",
+            "document_identity_key": "coderabbit",
+        },
+        score=0.8,
+    )
+    vector_repo.search.return_value = [target]
+    reranker_service.rerank.return_value = [
+        SearchResultChunk(
+            chunk_id="coderabbit-chunk",
+            document_id="coderabbit-doc",
+            content=target.content,
+            score=0.95,
+            metadata=target.metadata,
+        )
+    ]
+
+    await RAGPipelineService(**mock_dependencies).execute_query(
+        QueryRequest(query="Ок, розкажи детальніше про документ CodeRabbit", top_k=5)
+    )
+
+    vector_repo.search.assert_awaited_once()
+    assert vector_repo.search.await_args.kwargs["filters"] == {
+        "document_identity_key": "coderabbit"
+    }
     reranked_documents = reranker_service.rerank.call_args.kwargs["documents"]
     assert [chunk.document_id for chunk in reranked_documents] == ["coderabbit-doc"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_missing_document_does_not_fall_back_to_unrelated_sources(
+    mock_dependencies,
+):
+    vector_repo = mock_dependencies["vector_repo"]
+    llm_service = mock_dependencies["llm_service"]
+    vector_repo.search.return_value = []
+    vector_repo.find_document_identities.return_value = {
+        "coderabbit": "CodeRabbit",
+        "guide": "Project Guide",
+    }
+
+    response = await RAGPipelineService(**mock_dependencies).execute_query(
+        QueryRequest(query="Tell me about CodeRabbit, not NotUploaded")
+    )
+
+    assert response.source_chunks == []
+    assert "couldn't find relevant information" in response.answer
+    assert vector_repo.search.await_args.kwargs["filters"] == {
+        "document_identity_key": "coderabbit"
+    }
+    llm_service.generate_response.assert_not_awaited()
 
 
 @pytest.mark.asyncio

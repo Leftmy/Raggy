@@ -124,6 +124,8 @@ All configurations are strictly managed through technology-agnostic environment 
 - `RERANKER_PROVIDER`: Pluggable reranking service (`flashrank`, `cohere`, etc., default: `flashrank`).
 - `RERANKER_MODEL`: Reranking model identifier (default: `ms-marco-TinyBERT-L-2-v2`).
 - `CHUNK_SIZE`, `CHUNK_OVERLAP`, `TOP_K_RETRIEVAL`, `TOP_K_RERANK`: Tuning parameters for chunking and search accuracy.
+- `API_AUTH_TOKEN`, `TELEGRAM_ALLOWED_USER_IDS`: API Bearer credential and production Telegram user allowlist. Do not commit their values.
+- `MAX_UPLOAD_SIZE_BYTES`, `API_RATE_LIMIT_PER_HOUR`, `BOT_RATE_LIMIT_PER_HOUR`, `RATE_LIMIT_WINDOW_SECONDS`, `CORS_ORIGINS`, `LOG_LEVEL`: Runtime safety and operations configuration.
 
 ---
 
@@ -131,8 +133,10 @@ All configurations are strictly managed through technology-agnostic environment 
 
 The system is configured for multi-container orchestration via `docker-compose.yaml`:
 1. **`vector_db`**: Vector database container running on ports `6333` (HTTP) and `6334` (gRPC) with persistent volume storage (`vector_db_storage`).
-2. **`api`**: FastAPI service running Uvicorn with hot-reload enabled for development.
+2. **`api`**: FastAPI service running Uvicorn without hot reload in the Compose production-style configuration.
 3. **`bot`**: Dedicated container running the aiogram Telegram polling bot (`src.bot.runner`).
+
+Qdrant is reachable only on the Compose network by default; do not publish its unauthenticated ports publicly. Configure the production API token and bot user allowlist before deployment.
 
 ---
 

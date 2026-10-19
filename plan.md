@@ -21,6 +21,7 @@ flowchart TD
     M3 --> M4["Milestone 4: RAG Pipeline Domain (Retrieval + Rerank + Synthesis)"]
     M4 --> M5["Milestone 5: Presentation Layer Integration (FastAPI & Telegram Bot)"]
     M5 --> M6["Milestone 6: End-to-End Testing & Docker Deployment"]
+    M6 --> M7["Milestone 7: Security, Reliability & Production Hardening"]
 ```
 
 ---
@@ -96,3 +97,13 @@ flowchart TD
   - Verify volume persistence for `vector_db_storage`.
 - [x] **6.2 Full Test Suite Execution:**
   - Run full test suite: **29 tests passed in Docker container (100% green)**.
+
+---
+
+### Milestone 7: Security, Reliability & Production Hardening
+- [ ] Enforce bounded document uploads, supported file formats, and validated chunk/query limits.
+- [ ] Protect API routes with a configurable Bearer token and restrict production bot access to an explicit Telegram user allowlist.
+- [ ] Add process-local rate limits, safe client-facing errors, and bounded Telegram response formatting.
+- [ ] Keep synchronous embedding/reranking off the async event loop; validate embeddings before persistence.
+- [ ] Manage Qdrant client lifecycle, readiness probes, container user, internal-only vector DB networking, health checks, and resource/log limits.
+- [ ] Add regression tests for validation, authorization, rate limiting, empty retrieval, and error mapping.

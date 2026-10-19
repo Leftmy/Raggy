@@ -58,6 +58,8 @@ async def test_save_chunks_success(repository, mock_qdrant_client):
             chunk_id="doc1_0",
             document_id="doc1",
             content="Hello Qdrant world",
+            parent_chunk_id="doc1_parent_0",
+            parent_content="Parent passage containing the child text.",
             embedding=[0.1, 0.2, 0.3],
             metadata={"filename": "test.txt"},
         ),
@@ -75,6 +77,8 @@ async def test_save_chunks_success(repository, mock_qdrant_client):
     mock_qdrant_client.upsert.assert_awaited_once()
     saved_point = mock_qdrant_client.upsert.await_args.kwargs["points"][0]
     assert saved_point.payload["content"] == "Hello Qdrant world"
+    assert saved_point.payload["parent_chunk_id"] == "doc1_parent_0"
+    assert saved_point.payload["parent_content"] == "Parent passage containing the child text."
 
 
 @pytest.mark.asyncio
@@ -123,6 +127,8 @@ async def test_search_success(repository, mock_qdrant_client):
         "document_id": "doc1",
         "content": "Found content",
         "filename": "test.txt",
+        "parent_chunk_id": "doc1_parent_0",
+        "parent_content": "Parent content with surrounding context.",
     }
     mock_qdrant_client.search.return_value = [mock_hit]
 
@@ -133,6 +139,9 @@ async def test_search_success(repository, mock_qdrant_client):
     assert results[0].chunk_id == "doc1_0"
     assert results[0].document_id == "doc1"
     assert results[0].content == "Found content"
+    assert results[0].parent_chunk_id == "doc1_parent_0"
+    assert results[0].parent_content == "Parent content with surrounding context."
+    assert "parent_content" not in results[0].metadata
     mock_qdrant_client.search.assert_awaited_once()
 
 

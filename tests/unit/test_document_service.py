@@ -1,10 +1,12 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
-from src.domains.documents.schemas import DocumentChunk
-from src.domains.documents.service import DocumentService
+
+import pytest
+
 from src.domains.documents.repositories import VectorRepository
+from src.domains.documents.service import DocumentService
 from src.domains.documents.splitters import TextSplitterService
 from src.domains.rag.service import EmbeddingService
+from src.infrastructure.splitters.langchain_splitter import LangChainRecursiveSplitter
 
 
 @pytest.fixture
@@ -49,9 +51,60 @@ async def test_process_and_index_document_calls_repo_with_di(
         filename="test.txt",
     )
     assert response.total_chunks == 1
-    mock_splitter_service.split_text.assert_called_once()
+    assert mock_splitter_service.split_text.call_count == 2
     mock_embedding_service.embed_texts.assert_called_once()
     mock_vector_repo.save_chunks.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_process_document_stores_parent_context_for_each_child(
+    document_service,
+    mock_vector_repo,
+    mock_embedding_service,
+    mock_splitter_service,
+):
+    parent_text = "P" * 521 + "\n\nRelated subparagraph."
+    mock_splitter_service.split_text.side_effect = [
+        [parent_text],
+        ["P" * 500, "P" * 21],
+    ]
+    mock_embedding_service.embed_texts.return_value = [
+        [0.1, 0.2, 0.3],
+        [0.4, 0.5, 0.6],
+    ]
+
+    await document_service.process_and_index_document(
+        file_content=parent_text.encode(),
+        filename="test.txt",
+    )
+
+    saved_chunks = mock_vector_repo.save_chunks.await_args.args[0]
+    assert len(saved_chunks) == 2
+    assert saved_chunks[0].parent_chunk_id == saved_chunks[1].parent_chunk_id
+    assert saved_chunks[0].parent_content == parent_text
+    assert saved_chunks[1].parent_content == parent_text
+    assert saved_chunks[1].content == "P" * 21
+    assert saved_chunks[1].metadata["parent_chunk_index"] == 0
+    assert mock_embedding_service.embed_texts.call_args.args[0] == ["P" * 500, "P" * 21]
+
+
+def test_related_subparagraph_stays_in_parent_context():
+    text = "A" * 521 + "\n\n" + "Related subparagraph."
+    service = DocumentService(
+        vector_repository=MagicMock(spec=VectorRepository),
+        embedding_service=MagicMock(spec=EmbeddingService),
+        splitter_service=LangChainRecursiveSplitter(),
+    )
+
+    chunks = service.split_into_parent_child_chunks(
+        text,
+        child_chunk_size=500,
+        child_overlap=50,
+    )
+
+    assert len(chunks) > 1
+    assert all(parent_content == text for _, parent_content, _ in chunks)
+    assert all("Related subparagraph." in parent_content for _, parent_content, _ in chunks)
 
 
 @pytest.mark.asyncio
@@ -90,4 +143,19 @@ async def test_process_and_index_document_rejects_invalid_chunk_settings(documen
             filename="test.txt",
             chunk_size=10,
             chunk_overlap=10,
+        )
+
+
+@pytest.mark.asyncio
+async def test_process_and_index_document_rejects_child_size_larger_than_parent(
+    document_service,
+):
+    from src.core.exceptions import DocumentProcessingError
+
+    with pytest.raises(DocumentProcessingError, match="Parent chunk size"):
+        await document_service.process_and_index_document(
+            file_content=b"Sample content",
+            filename="test.txt",
+            chunk_size=2500,
+            chunk_overlap=50,
         )

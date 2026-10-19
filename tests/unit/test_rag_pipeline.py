@@ -1,10 +1,12 @@
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from src.domains.documents.repositories import VectorRepository
+from src.domains.documents.schemas import DocumentChunk
 from src.domains.rag.pipeline import RAGPipelineService
 from src.domains.rag.schemas import QueryRequest, SearchResultChunk
-from src.domains.documents.schemas import DocumentChunk
-from src.domains.rag.service import EmbeddingService, RerankerService, LLMService
-from src.domains.documents.repositories import VectorRepository
+from src.domains.rag.service import EmbeddingService, LLMService, RerankerService
 
 
 @pytest.fixture
@@ -99,3 +101,79 @@ async def test_execute_query_when_no_documents_found_does_not_call_llm(mock_depe
     assert "couldn't find relevant information" in response.answer
     assert response.source_chunks == []
     llm_service.generate_response.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_execute_query_expands_reranked_child_to_unique_parent_context(mock_dependencies):
+    vector_repo = mock_dependencies["vector_repo"]
+    reranker_service = mock_dependencies["reranker_service"]
+    llm_service = mock_dependencies["llm_service"]
+    parent_text = "Long parent paragraph with a relevant subparagraph."
+    vector_repo.search.return_value = [
+        DocumentChunk(
+            chunk_id="child-1",
+            document_id="doc-1",
+            content="Relevant child passage",
+            parent_chunk_id="parent-1",
+            parent_content=parent_text,
+            metadata={"filename": "doc.txt"},
+            score=0.9,
+        ),
+        DocumentChunk(
+            chunk_id="child-2",
+            document_id="doc-1",
+            content="Overlapping relevant child passage",
+            parent_chunk_id="parent-1",
+            parent_content=parent_text,
+            metadata={"filename": "doc.txt"},
+            score=0.8,
+        ),
+        DocumentChunk(
+            chunk_id="child-3",
+            document_id="doc-1",
+            content="Another relevant passage",
+            parent_chunk_id="parent-2",
+            parent_content="A separate parent paragraph.",
+            metadata={"filename": "doc.txt"},
+            score=0.7,
+        ),
+    ]
+    reranker_service.rerank.return_value = [
+        SearchResultChunk(
+            chunk_id="child-1",
+            document_id="doc-1",
+            content="Relevant child passage",
+            score=0.98,
+            metadata={"filename": "doc.txt"},
+        ),
+        SearchResultChunk(
+            chunk_id="child-2",
+            document_id="doc-1",
+            content="Overlapping relevant child passage",
+            score=0.95,
+            metadata={"filename": "doc.txt"},
+        ),
+        SearchResultChunk(
+            chunk_id="child-3",
+            document_id="doc-1",
+            content="Another relevant passage",
+            score=0.9,
+            metadata={"filename": "doc.txt"},
+        ),
+    ]
+
+    response = await RAGPipelineService(**mock_dependencies).execute_query(
+        QueryRequest(query="Find the related subparagraph", top_k=5, rerank_top_k=2)
+    )
+
+    reranker_service.rerank.assert_called_once()
+    assert reranker_service.rerank.call_args.kwargs["top_n"] == 5
+    llm_service.generate_response.assert_awaited_once()
+    context_chunks = llm_service.generate_response.await_args.kwargs["context_chunks"]
+    assert len(context_chunks) == 2
+    assert context_chunks[0].chunk_id == "parent-1"
+    assert context_chunks[0].content == parent_text
+    assert context_chunks[0].score == 0.98
+    assert context_chunks[1].chunk_id == "parent-2"
+    assert context_chunks[1].content == "A separate parent paragraph."
+    assert response.source_chunks == context_chunks

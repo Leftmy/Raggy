@@ -1,5 +1,6 @@
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any, List, Optional
 
 from qdrant_client import AsyncQdrantClient
@@ -128,6 +129,114 @@ class QdrantVectorRepository(VectorRepository):
         except Exception as e:
             logger.error("Failed to save chunks to Qdrant (%s)", type(e).__name__)
             raise VectorStoreError("Failed to persist document chunks") from e
+
+    async def replace_document(
+        self,
+        chunks: List[DocumentChunk],
+        document_identity_key: str,
+        place_key: str,
+        uploaded_at: datetime,
+    ) -> tuple[bool, bool]:
+        """Persist the newest matching version and remove superseded document points."""
+        if not chunks:
+            return True, False
+        if uploaded_at.tzinfo is None:
+            raise ValueError("uploaded_at must include a timezone")
+
+        client = self.get_client()
+        identity_filter = qmodels.Filter(
+            must=[
+                qmodels.FieldCondition(
+                    key="document_identity_key",
+                    match=qmodels.MatchValue(value=document_identity_key),
+                ),
+                qmodels.FieldCondition(
+                    key="place_key",
+                    match=qmodels.MatchValue(value=place_key),
+                ),
+            ]
+        )
+        latest_existing_upload: Optional[datetime] = None
+        existing_document_ids = set()
+
+        try:
+            vector_size = len(chunks[0].embedding or [])
+            if vector_size == 0:
+                raise ValueError("Replacement chunks must include embeddings")
+            await self.ensure_collection(vector_size=vector_size)
+
+            offset = None
+            while True:
+                points, next_offset = await client.scroll(
+                    collection_name=self.collection_name,
+                    scroll_filter=identity_filter,
+                    limit=256,
+                    with_payload=["document_id", "uploaded_at"],
+                    with_vectors=False,
+                    offset=offset,
+                )
+                for point in points:
+                    payload = point.payload or {}
+                    existing_id = payload.get("document_id")
+                    if not existing_id:
+                        raise VectorStoreError(
+                            "Stored matching document has no document identifier"
+                        )
+                    existing_document_ids.add(existing_id)
+                    timestamp = payload.get("uploaded_at")
+                    if timestamp is None:
+                        raise VectorStoreError(
+                            "Stored matching document has no upload timestamp"
+                        )
+                    try:
+                        existing_upload = datetime.fromisoformat(
+                            str(timestamp).replace("Z", "+00:00")
+                        )
+                    except ValueError as exc:
+                        raise VectorStoreError(
+                            "Stored document has an invalid upload timestamp"
+                        ) from exc
+                    if existing_upload.tzinfo is None:
+                        existing_upload = existing_upload.replace(tzinfo=timezone.utc)
+                    existing_upload = existing_upload.astimezone(timezone.utc)
+                    if (
+                        latest_existing_upload is None
+                        or existing_upload > latest_existing_upload
+                    ):
+                        latest_existing_upload = existing_upload
+                if next_offset is None:
+                    break
+                offset = next_offset
+
+            normalized_upload_time = uploaded_at.astimezone(timezone.utc)
+            if (
+                latest_existing_upload is not None
+                and normalized_upload_time <= latest_existing_upload
+            ):
+                return False, False
+
+            await self.save_chunks(chunks)
+            if existing_document_ids:
+                superseded_filter = qmodels.Filter(
+                    must=identity_filter.must,
+                    must_not=[
+                        qmodels.FieldCondition(
+                            key="document_id",
+                            match=qmodels.MatchValue(value=chunks[0].document_id),
+                        )
+                    ],
+                )
+                await client.delete(
+                    collection_name=self.collection_name,
+                    points_selector=superseded_filter,
+                    wait=True,
+                )
+            return True, bool(existing_document_ids)
+        except Exception as e:
+            logger.error("Failed to replace document version (%s)", type(e).__name__)
+            if isinstance(e, (VectorStoreError, ValueError)):
+                raise
+            raise VectorStoreError("Failed to replace document version") from e
 
     async def search(
         self,

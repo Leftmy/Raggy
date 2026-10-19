@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 
 from aiogram import F, Router, types
 
@@ -6,7 +7,7 @@ from src.bot.handlers.base import is_authorized
 from src.core.config import Settings
 from src.core.rate_limit import InMemoryRateLimiter
 from src.domains.rag.pipeline import RAGPipelineService
-from src.domains.rag.schemas import QueryRequest
+from src.domains.rag.schemas import QueryRequest, SearchResultChunk
 
 router = Router(name="query_handlers")
 logger = logging.getLogger(__name__)
@@ -26,6 +27,42 @@ def split_message(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:
         messages.append(remaining[:split_at])
         remaining = remaining[split_at:].lstrip("\n")
     return messages or [""]
+
+
+def format_source_citation(chunk: SearchResultChunk) -> str:
+    metadata = chunk.metadata
+    filename = metadata.get("filename")
+    document_title = metadata.get("document_title")
+    source = document_title or filename or f"Document {chunk.document_id}"
+    if document_title and filename:
+        source = f"{source} ({filename})"
+    place = metadata.get("place")
+    if place:
+        source = f"{source} — {place}"
+
+    attribution = []
+    sender = metadata.get("uploaded_by")
+    username = metadata.get("uploaded_by_username")
+    if sender:
+        if username:
+            sender = f"{sender} (@{username.lstrip('@')})"
+        attribution.append(f"sent by {sender}")
+    else:
+        attribution.append("sender not recorded")
+    uploaded_at = metadata.get("uploaded_at")
+    if uploaded_at:
+        try:
+            timestamp = datetime.fromisoformat(str(uploaded_at).replace("Z", "+00:00"))
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=timezone.utc)
+            uploaded_at = timestamp.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        except ValueError:
+            uploaded_at = str(uploaded_at)
+        attribution.append(f"received {uploaded_at}")
+    else:
+        attribution.append("upload time not recorded")
+    suffix = f"; {', '.join(attribution)}" if attribution else ""
+    return f"- {source}{suffix}"
 
 
 @router.message(F.text)
@@ -67,8 +104,7 @@ async def handle_user_query(
         sources_text = ""
         if response.source_chunks:
             sources_text = "\n\nSources:\n" + "\n".join(
-                f"- {chunk.metadata.get('filename') or 'Document'} (score: {chunk.score:.2f})"
-                for chunk in response.source_chunks
+                format_source_citation(chunk) for chunk in response.source_chunks
             )
 
         answer = response.answer.strip() or "I couldn't generate an answer from the available information."

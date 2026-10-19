@@ -9,6 +9,32 @@ from src.domains.rag.schemas import QueryRequest, SearchResultChunk
 from src.domains.rag.service import EmbeddingService, LLMService, RerankerService
 
 
+def test_source_citation_includes_document_place_sender_and_upload_time():
+    from src.bot.handlers.queries import format_source_citation
+
+    chunk = SearchResultChunk(
+        chunk_id="parent-1",
+        document_id="doc-1",
+        content="Relevant information",
+        score=0.98,
+        metadata={
+            "filename": "fall-guide.pdf",
+            "document_title": "Autumn guide",
+            "place": "North Camp",
+            "uploaded_by": "Owl",
+            "uploaded_at": "2026-10-19T18:49:00+00:00",
+        },
+    )
+
+    citation = format_source_citation(chunk)
+
+    assert "Autumn guide" in citation
+    assert "North Camp" in citation
+    assert "fall-guide.pdf" in citation
+    assert "Owl" in citation
+    assert "2026-10-19 18:49 UTC" in citation
+
+
 @pytest.fixture
 def mock_dependencies():
     vector_repo = MagicMock(spec=VectorRepository)

@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import List, Optional
+
 from src.domains.documents.schemas import DocumentChunk
 
 
@@ -12,6 +14,17 @@ class VectorRepository(ABC):
     @abstractmethod
     async def save_chunks(self, chunks: List[DocumentChunk]) -> bool:
         """Persist chunk embeddings in vector DB."""
+        pass
+
+    @abstractmethod
+    async def replace_document(
+        self,
+        chunks: List[DocumentChunk],
+        document_identity_key: str,
+        place_key: str,
+        uploaded_at: datetime,
+    ) -> tuple[bool, bool]:
+        """Save a newer document version and remove older versions of the same document and place."""
         pass
 
     @abstractmethod

@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -150,3 +151,73 @@ async def test_delete_by_document_id_success(repository, mock_qdrant_client):
     result = await repository.delete_by_document_id("doc1")
     assert result is True
     mock_qdrant_client.delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_replace_document_replaces_only_the_matching_document_and_place(
+    repository,
+    mock_qdrant_client,
+):
+    existing = MagicMock()
+    existing.payload = {
+        "document_id": "old-doc",
+        "uploaded_at": "2026-10-18T12:00:00+00:00",
+    }
+    mock_qdrant_client.scroll = AsyncMock(return_value=([existing], None))
+    repository.save_chunks = AsyncMock(return_value=True)
+    chunks = [
+        DocumentChunk(
+            chunk_id="new-doc_0",
+            document_id="new-doc",
+            content="new text",
+            metadata={
+                "document_identity_key": "contributions",
+                "place_key": "camp north",
+            },
+            embedding=[0.1, 0.2, 0.3],
+        )
+    ]
+    uploaded_at = datetime(2026, 10, 19, tzinfo=timezone.utc)
+
+    result = await repository.replace_document(
+        chunks,
+        document_identity_key="contributions",
+        place_key="camp north",
+        uploaded_at=uploaded_at,
+    )
+
+    assert result == (True, True)
+    repository.save_chunks.assert_awaited_once_with(chunks)
+    mock_qdrant_client.delete.assert_awaited_once()
+    delete_filter = mock_qdrant_client.delete.await_args.kwargs["points_selector"]
+    assert len(delete_filter.must) == 2
+    assert len(delete_filter.must_not) == 1
+
+
+@pytest.mark.asyncio
+async def test_replace_document_does_not_overwrite_a_newer_upload(repository, mock_qdrant_client):
+    existing = MagicMock()
+    existing.payload = {
+        "document_id": "newer-doc",
+        "uploaded_at": "2026-10-20T12:00:00+00:00",
+    }
+    mock_qdrant_client.scroll = AsyncMock(return_value=([existing], None))
+    repository.save_chunks = AsyncMock(return_value=True)
+
+    result = await repository.replace_document(
+        [
+            DocumentChunk(
+                chunk_id="older-doc_0",
+                document_id="older-doc",
+                content="old text",
+                embedding=[0.1, 0.2, 0.3],
+            )
+        ],
+        document_identity_key="guide",
+        place_key="camp north",
+        uploaded_at=datetime(2026, 10, 19, tzinfo=timezone.utc),
+    )
+
+    assert result == (False, False)
+    repository.save_chunks.assert_not_awaited()
+    mock_qdrant_client.delete.assert_not_awaited()

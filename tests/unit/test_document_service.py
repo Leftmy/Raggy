@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -86,6 +87,52 @@ async def test_process_document_stores_parent_context_for_each_child(
     assert saved_chunks[1].content == "P" * 21
     assert saved_chunks[1].metadata["parent_chunk_index"] == 0
     assert mock_embedding_service.embed_texts.call_args.args[0] == ["P" * 500, "P" * 21]
+
+
+@pytest.mark.asyncio
+async def test_process_document_replaces_same_document_and_place_with_upload_metadata(
+    document_service,
+    mock_vector_repo,
+):
+    mock_vector_repo.replace_document = AsyncMock(return_value=(True, True))
+    uploaded_at = datetime(2026, 10, 19, 18, 49, tzinfo=timezone.utc)
+
+    response = await document_service.process_and_index_document(
+        file_content=b"New contributions",
+        filename="contributions.txt",
+        document_title="Contributions",
+        place="Camp North",
+        uploaded_by="Owl",
+        uploaded_at=uploaded_at,
+    )
+
+    chunks = mock_vector_repo.replace_document.await_args.args[0]
+    assert response.replaced_previous is True
+    assert chunks[0].metadata["document_title"] == "Contributions"
+    assert chunks[0].metadata["place"] == "Camp North"
+    assert chunks[0].metadata["uploaded_by"] == "Owl"
+    assert chunks[0].metadata["uploaded_at"] == uploaded_at.isoformat()
+    assert mock_vector_repo.replace_document.await_args.kwargs == {
+        "document_identity_key": "contributions",
+        "place_key": "camp north",
+        "uploaded_at": uploaded_at,
+    }
+    mock_vector_repo.save_chunks.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_process_document_rejects_an_older_replacement(document_service, mock_vector_repo):
+    from src.core.exceptions import DocumentProcessingError
+
+    mock_vector_repo.replace_document = AsyncMock(return_value=(False, False))
+    with pytest.raises(DocumentProcessingError, match="newer version"):
+        await document_service.process_and_index_document(
+            file_content=b"Old contributions",
+            filename="contributions.txt",
+            document_title="Contributions",
+            place="Camp North",
+            uploaded_at=datetime(2026, 10, 18, tzinfo=timezone.utc),
+        )
 
 
 def test_related_subparagraph_stays_in_parent_context():

@@ -39,6 +39,8 @@ The API and Telegram bot each allow 60 requests per client/user per hour by defa
 
 Documents use hierarchical chunking: child chunks (`CHUNK_SIZE`, `CHUNK_OVERLAP`) are embedded and searched, while each child retains its parent context (`PARENT_CHUNK_SIZE`, 2000 characters by default). After reranking, the bot/API provides each distinct parent chunk to the LLM, so a relevant short passage can be answered with its surrounding paragraph context. Re-upload documents already indexed before enabling parent chunking to add parent context to their stored chunks.
 
+For Telegram uploads, add a caption with `Документ: <назва>` and `Місце: <місце>`. A later upload replaces the indexed version only when both normalized values match; the bot retains the sender and Telegram message time and includes document source details in answers. Uploads without both caption fields are not indexed. Documents indexed before this metadata was introduced cannot be matched safely by filename alone and have no stored sender/time; migrate them by reindexing and removing the old records through your Qdrant administration process.
+
 ### 2. Run with Docker Compose
 ```bash
 docker compose up --build

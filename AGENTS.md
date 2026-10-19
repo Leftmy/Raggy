@@ -4,7 +4,7 @@
 
 This project is a production-ready, domain-driven **Retrieval-Augmented Generation (RAG)** system integrated with a **Telegram Bot** and a **FastAPI** backend.
 
-The system ingests and processes multiple document formats (`.pdf`, `.docx`, `.txt`) as well as direct text inputs, generates vector embeddings, stores and searches them in a vector database, reranks candidate chunks for optimal relevance, and generates contextual answers using Google Gemini 1.5 Pro.
+The system ingests and processes multiple document formats (`.pdf`, `.docx`, `.txt`) as well as direct text inputs, generates vector embeddings, stores and searches them in a vector database, reranks candidate chunks for optimal relevance, and generates contextual answers using Google Gemini 3.8 Flash.
 
 ---
 
@@ -17,7 +17,7 @@ The system ingests and processes multiple document formats (`.pdf`, `.docx`, `.t
 - **Vector Database:** [Qdrant](https://qdrant.tech/) (scalable vector search engine with gRPC and HTTP APIs).
 - **Embedding Generation:** [FastEmbed](https://github.com/qdrant/fastembed) (`BAAI/bge-small-en-v1.5` by default) — chosen for lightweight, fast, local CPU-optimized embeddings without heavy PyTorch dependencies.
 - **Reranker:** [FlashRank](https://github.com/PrithivirajDamodaran/FlashRank) (`ms-marco-TinyBERT-L-2-v2`) — fast, Ultra-lite re-ranking engine designed for low-latency reranking before LLM context construction.
-- **LLM & Orchestration:** [LangChain](https://www.langchain.com/) / `langchain-google-genai` powering Google Gemini 1.5 Pro.
+- **LLM & Orchestration:** [LangChain](https://www.langchain.com/) / `langchain-google-genai` powering Google Gemini 3.8 Flash.
 - **Document Parsers:** `pypdf` (for PDF files), `python-docx` (for Word documents), and native Python UTF-8 text decoders.
 
 ---
@@ -32,7 +32,7 @@ The codebase separates domains logically rather than dumping all models, control
   - `qdrant/`: Client interaction and Qdrant repository implementation.
   - `embeddings/`: FastEmbed wrapper implementing the domain `EmbeddingService` interface.
   - `rerankers/`: FlashRank wrapper implementing the domain `RerankerService` interface.
-  - `llm/`: Gemini 1.5 Pro wrapper implementing the domain `LLMService` interface.
+  - `llm/`: Gemini 3.8 Flash wrapper implementing the domain `LLMService` interface.
 - **`src/bot/`**: Telegram bot presentation layer decoupled from backend internals, communicating directly with domain services.
 
 ### 3.2 Architectural Pattern: Repository – Service – Controller
@@ -102,7 +102,7 @@ User Query (Telegram or API)
    (Context Chunks + User Question)
                     │
                     ▼
-       [Google Gemini 1.5 Pro]
+       [Google Gemini 3.8 Flash]
                     │
                     ▼
   Final Formatted Answer returned to User
@@ -116,7 +116,7 @@ All configurations are strictly managed through technology-agnostic environment 
 - `TELEGRAM_BOT_TOKEN`: Telegram bot authentication token from @BotFather.
 - `LLM_PROVIDER`: Pluggable LLM provider (`gemini`, `openai`, `anthropic`, etc., default: `gemini`).
 - `LLM_API_KEY`: API authentication key for the selected LLM provider.
-- `LLM_MODEL`: Target model identifier (default: `gemini-1.5-pro`).
+- `LLM_MODEL`: Target model identifier (default: `gemini-3.8-flash`).
 - `VECTOR_STORE_PROVIDER`: Pluggable vector store (`qdrant`, `pinecone`, `milvus`, etc., default: `qdrant`).
 - `VECTOR_STORE_HOST`, `VECTOR_STORE_PORT`, `VECTOR_STORE_COLLECTION`: Target vector store instance & collection.
 - `EMBEDDING_PROVIDER`: Pluggable embedding service (`fastembed`, `openai`, etc., default: `fastembed`).

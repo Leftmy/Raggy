@@ -74,7 +74,7 @@ async def handle_user_query(
 ):
     """
     Handle plain text questions or messages.
-    Triggers RAGPipelineService: FastEmbed query -> Qdrant search -> FlashRank rerank -> Gemini 1.5 Pro.
+    Triggers RAGPipelineService: FastEmbed query -> Qdrant search -> FlashRank rerank -> Gemini 3.8 Flash.
     """
     user_query = message.text
     if not user_query or user_query.startswith("/"):

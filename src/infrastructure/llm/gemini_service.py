@@ -24,7 +24,7 @@ class GeminiLLMService(LLMService):
     def __init__(
         self,
         api_key: str,
-        model_name: str = "gemini-1.5-pro",
+        model_name: str = "gemini-3.8-flash",
         temperature: float = 0.2,
         timeout_seconds: float = 60.0,
         system_prompt: Optional[str] = None,

@@ -69,7 +69,7 @@ def create_application() -> FastAPI:
     app = FastAPI(
         title="RAG System API",
         version="0.1.0",
-        description="RAG API powered by FastEmbed, FlashRank, Qdrant & Gemini 1.5 Pro",
+        description="RAG API powered by FastEmbed, FlashRank, Qdrant & Gemini 3.8 Flash",
         debug=settings.DEBUG,
         lifespan=lifespan,
     )

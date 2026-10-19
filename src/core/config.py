@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     # LLM Settings
     LLM_PROVIDER: str = "gemini"
     LLM_API_KEY: SecretStr | None = None
-    LLM_MODEL: str = "gemini-1.5-pro"
+    LLM_MODEL: str = "gemini-3.8-flash"
     LLM_TIMEOUT_SECONDS: float = Field(default=60.0, gt=0)
     LLM_SYSTEM_PROMPT: str | None = None
 

@@ -41,9 +41,9 @@ def mock_gemini():
 @pytest.mark.asyncio
 async def test_generate_response_constructs_prompt_and_returns_text(mock_gemini, sample_chunks):
     mock_cls, mock_instance = mock_gemini
-    service = GeminiLLMService(api_key="fake-test-key", model_name="gemini-1.5-pro")
+    service = GeminiLLMService(api_key="fake-test-key", model_name="gemini-3.8-flash")
     mock_cls.assert_called_once_with(
-        model="gemini-1.5-pro",
+        model="gemini-3.8-flash",
         google_api_key="fake-test-key",
         temperature=0.2,
     )

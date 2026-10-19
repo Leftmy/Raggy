@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     # Chunking & Retrieval Strategy
     CHUNK_SIZE: int = Field(default=500, gt=0)
     CHUNK_OVERLAP: int = Field(default=50, ge=0)
+    PARENT_CHUNK_SIZE: int = Field(default=2000, gt=0)
     MAX_CHUNKS_PER_DOCUMENT: int = Field(default=10000, gt=0)
     TOP_K_RETRIEVAL: int = Field(default=10, ge=1, le=100)
     TOP_K_RERANK: int = Field(default=3, ge=1, le=100)
@@ -70,6 +71,8 @@ class Settings(BaseSettings):
     def validate_runtime_settings(self):
         if self.CHUNK_OVERLAP >= self.CHUNK_SIZE:
             raise ValueError("CHUNK_OVERLAP must be less than CHUNK_SIZE")
+        if self.PARENT_CHUNK_SIZE < self.CHUNK_SIZE:
+            raise ValueError("PARENT_CHUNK_SIZE must be at least CHUNK_SIZE")
         if self.TOP_K_RERANK > self.TOP_K_RETRIEVAL:
             raise ValueError("TOP_K_RERANK cannot exceed TOP_K_RETRIEVAL")
         if self.APP_ENV == "production":

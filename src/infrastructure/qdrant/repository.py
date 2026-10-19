@@ -90,12 +90,23 @@ class QdrantVectorRepository(VectorRepository):
                     **{
                         key: value
                         for key, value in chunk.metadata.items()
-                        if key not in {"chunk_id", "document_id", "content", "score"}
+                        if key not in {
+                            "chunk_id",
+                            "document_id",
+                            "content",
+                            "parent_chunk_id",
+                            "parent_content",
+                            "score",
+                        }
                     },
                     "chunk_id": chunk.chunk_id,
                     "document_id": chunk.document_id,
                     "content": chunk.content,
                 }
+                if chunk.parent_chunk_id is not None:
+                    payload["parent_chunk_id"] = chunk.parent_chunk_id
+                if chunk.parent_content is not None:
+                    payload["parent_content"] = chunk.parent_content
                 points.append(
                     qmodels.PointStruct(
                         id=point_id,
@@ -160,7 +171,13 @@ class QdrantVectorRepository(VectorRepository):
                         chunk_id=chunk_id,
                         document_id=doc_id,
                         content=content,
-                        metadata=metadata,
+                        parent_chunk_id=payload.get("parent_chunk_id"),
+                        parent_content=payload.get("parent_content"),
+                        metadata={
+                            key: value
+                            for key, value in metadata.items()
+                            if key not in {"parent_chunk_id", "parent_content"}
+                        },
                         score=hit.score,
                     )
                 )

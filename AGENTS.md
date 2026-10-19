@@ -123,7 +123,7 @@ All configurations are strictly managed through technology-agnostic environment 
 - `EMBEDDING_MODEL`: Embedding model identifier (default: `BAAI/bge-small-en-v1.5`).
 - `RERANKER_PROVIDER`: Pluggable reranking service (`flashrank`, `cohere`, etc., default: `flashrank`).
 - `RERANKER_MODEL`: Reranking model identifier (default: `ms-marco-TinyBERT-L-2-v2`).
-- `CHUNK_SIZE`, `CHUNK_OVERLAP`, `TOP_K_RETRIEVAL`, `TOP_K_RERANK`: Tuning parameters for chunking and search accuracy.
+- `CHUNK_SIZE`, `CHUNK_OVERLAP`, `PARENT_CHUNK_SIZE`, `TOP_K_RETRIEVAL`, `TOP_K_RERANK`: Tuning parameters for hierarchical chunking and search accuracy.
 - `API_AUTH_TOKEN`, `TELEGRAM_ALLOWED_USER_IDS`: API Bearer credential and production Telegram user allowlist. Do not commit their values.
 - `MAX_UPLOAD_SIZE_BYTES`, `API_RATE_LIMIT_PER_HOUR`, `BOT_RATE_LIMIT_PER_HOUR`, `RATE_LIMIT_WINDOW_SECONDS`, `CORS_ORIGINS`, `LOG_LEVEL`: Runtime safety and operations configuration.
 

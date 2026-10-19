@@ -1,16 +1,16 @@
 from functools import lru_cache
+
 from src.core.config import get_settings
 from src.core.exceptions import ConfigurationError
 from src.domains.documents.repositories import VectorRepository
-from src.domains.documents.splitters import TextSplitterService
 from src.domains.documents.service import DocumentService
-from src.domains.rag.service import EmbeddingService, RerankerService, LLMService
+from src.domains.documents.splitters import TextSplitterService
 from src.domains.rag.pipeline import RAGPipelineService
-
-from src.infrastructure.qdrant.repository import QdrantVectorRepository
+from src.domains.rag.service import EmbeddingService, LLMService, RerankerService
 from src.infrastructure.embeddings.fastembed_service import FastEmbedService
-from src.infrastructure.rerankers.flashrank_service import FlashRankReranker
 from src.infrastructure.llm.gemini_service import GeminiLLMService
+from src.infrastructure.qdrant.repository import QdrantVectorRepository
+from src.infrastructure.rerankers.flashrank_service import FlashRankReranker
 from src.infrastructure.splitters.langchain_splitter import LangChainRecursiveSplitter
 
 
@@ -76,6 +76,7 @@ def get_document_service() -> DocumentService:
         splitter_service=get_splitter_service(),
         chunk_size=get_settings().CHUNK_SIZE,
         chunk_overlap=get_settings().CHUNK_OVERLAP,
+        parent_chunk_size=get_settings().PARENT_CHUNK_SIZE,
         max_chunks=get_settings().MAX_CHUNKS_PER_DOCUMENT,
         max_upload_size=get_settings().MAX_UPLOAD_SIZE_BYTES,
     )

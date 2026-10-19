@@ -21,6 +21,7 @@ class DocumentService:
         splitter_service: TextSplitterService,
         chunk_size: int = 500,
         chunk_overlap: int = 50,
+        parent_chunk_size: int = 2000,
         max_chunks: int = 10000,
         max_upload_size: int = 20 * 1024 * 1024,
     ):
@@ -29,6 +30,7 @@ class DocumentService:
         self.splitter_service = splitter_service
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
+        self.parent_chunk_size = parent_chunk_size
         self.max_chunks = max_chunks
         self.max_upload_size = max_upload_size
 
@@ -38,6 +40,30 @@ class DocumentService:
 
     def chunk_text(self, text: str, chunk_size: int = 500, overlap: int = 50) -> List[str]:
         return self.splitter_service.split_text(text, chunk_size=chunk_size, overlap=overlap)
+
+    def split_into_parent_child_chunks(
+        self,
+        text: str,
+        child_chunk_size: int,
+        child_overlap: int,
+    ) -> List[tuple[int, str, str]]:
+        parent_chunks = self.splitter_service.split_text(
+            text,
+            chunk_size=self.parent_chunk_size,
+            overlap=0,
+        )
+        chunks = []
+        for parent_index, parent_content in enumerate(parent_chunks):
+            child_contents = self.chunk_text(
+                parent_content,
+                chunk_size=child_chunk_size,
+                overlap=child_overlap,
+            )
+            chunks.extend(
+                (parent_index, parent_content, child_content)
+                for child_content in child_contents
+            )
+        return chunks
 
     async def process_and_index_document(
         self,
@@ -60,30 +86,27 @@ class DocumentService:
         selected_overlap = chunk_overlap if chunk_overlap is not None else self.chunk_overlap
         if selected_chunk_size <= 0 or selected_overlap < 0 or selected_overlap >= selected_chunk_size:
             raise DocumentProcessingError("Chunk size must be positive and overlap must be smaller than chunk size")
+        if self.parent_chunk_size < selected_chunk_size:
+            raise DocumentProcessingError("Parent chunk size must be at least the child chunk size")
         doc_id = document_id or str(uuid.uuid4())
         raw_text = self.extract_text(file_content, filename)
         if not raw_text.strip():
             raise DocumentProcessingError("The document contains no extractable text")
 
-        step = selected_chunk_size - selected_overlap
-        estimated_chunks = (len(raw_text) + step - 1) // step
-        if estimated_chunks > self.max_chunks:
-            raise DocumentProcessingError(
-                f"The document is estimated to exceed the maximum of {self.max_chunks} chunks"
-            )
-        chunks_text = await asyncio.to_thread(
-            self.chunk_text,
+        parent_child_chunks = await asyncio.to_thread(
+            self.split_into_parent_child_chunks,
             raw_text,
-            chunk_size=selected_chunk_size,
-            overlap=selected_overlap,
+            child_chunk_size=selected_chunk_size,
+            child_overlap=selected_overlap,
         )
-        if not chunks_text:
+        if not parent_child_chunks:
             raise DocumentProcessingError("The document produced no text chunks")
-        if len(chunks_text) > self.max_chunks:
+        if len(parent_child_chunks) > self.max_chunks:
             raise DocumentProcessingError(
                 f"The document exceeds the maximum of {self.max_chunks} chunks"
             )
 
+        chunks_text = [child_content for _, _, child_content in parent_child_chunks]
         embeddings = await asyncio.to_thread(self.embedding_service.embed_texts, chunks_text)
         if len(embeddings) != len(chunks_text):
             raise DocumentProcessingError(
@@ -97,10 +120,16 @@ class DocumentService:
                 chunk_id=f"{doc_id}_{idx}",
                 document_id=doc_id,
                 content=chunk_content,
-                metadata={"filename": filename, "chunk_index": idx},
+                parent_chunk_id=f"{doc_id}_parent_{parent_index}",
+                parent_content=parent_content,
+                metadata={
+                    "filename": filename,
+                    "chunk_index": idx,
+                    "parent_chunk_index": parent_index,
+                },
                 embedding=embeddings[idx],
             )
-            for idx, chunk_content in enumerate(chunks_text)
+            for idx, (parent_index, parent_content, chunk_content) in enumerate(parent_child_chunks)
         ]
 
         await self.vector_repository.save_chunks(document_chunks)

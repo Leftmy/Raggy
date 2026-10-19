@@ -37,6 +37,8 @@ Uploads are limited by `MAX_UPLOAD_SIZE_BYTES` (20 MiB by default). Accepted for
 
 The API and Telegram bot each allow 60 requests per client/user per hour by default. The bot shares a user's hourly quota across text queries and document uploads. Limits are process-local and require a shared backend such as Redis when running multiple replicas.
 
+Documents use hierarchical chunking: child chunks (`CHUNK_SIZE`, `CHUNK_OVERLAP`) are embedded and searched, while each child retains its parent context (`PARENT_CHUNK_SIZE`, 2000 characters by default). After reranking, the bot/API provides each distinct parent chunk to the LLM, so a relevant short passage can be answered with its surrounding paragraph context. Re-upload documents already indexed before enabling parent chunking to add parent context to their stored chunks.
+
 ### 2. Run with Docker Compose
 ```bash
 docker compose up --build

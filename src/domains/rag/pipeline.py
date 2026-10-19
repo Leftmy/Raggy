@@ -1,8 +1,9 @@
 import asyncio
 from typing import List
-from src.domains.rag.schemas import QueryRequest, QueryResponse, SearchResultChunk
-from src.domains.rag.service import EmbeddingService, RerankerService, LLMService
+
 from src.domains.documents.repositories import VectorRepository
+from src.domains.rag.schemas import QueryRequest, QueryResponse, SearchResultChunk
+from src.domains.rag.service import EmbeddingService, LLMService, RerankerService
 
 
 class RAGPipelineService:
@@ -37,6 +38,7 @@ class RAGPipelineService:
         )
 
         # Map DocumentChunk to SearchResultChunk for reranker
+        chunks_by_id = {chunk.chunk_id: chunk for chunk in retrieved_chunks}
         candidate_search_chunks: List[SearchResultChunk] = [
             SearchResultChunk(
                 chunk_id=chunk.chunk_id,
@@ -55,14 +57,40 @@ class RAGPipelineService:
                 self.reranker_service.rerank,
                 query=request.query,
                 documents=candidate_search_chunks,
-                top_n=request.rerank_top_k,
+                top_n=request.top_k,
             )
 
+        # Expand matched child chunks to their parent context and avoid duplicate parents.
+        expanded_chunks: List[SearchResultChunk] = []
+        seen_parent_ids = set()
+        for chunk in reranked_chunks:
+            retrieved = chunks_by_id.get(chunk.chunk_id)
+            parent_id = retrieved.parent_chunk_id if retrieved else None
+            expanded_chunk_id = parent_id or chunk.chunk_id
+            if expanded_chunk_id in seen_parent_ids:
+                continue
+            seen_parent_ids.add(expanded_chunk_id)
+            expanded_chunks.append(
+                SearchResultChunk(
+                    chunk_id=expanded_chunk_id,
+                    document_id=chunk.document_id,
+                    content=(
+                        retrieved.parent_content
+                        if retrieved and retrieved.parent_content
+                        else chunk.content
+                    ),
+                    score=chunk.score,
+                    metadata=chunk.metadata,
+                )
+            )
+            if len(expanded_chunks) >= request.rerank_top_k:
+                break
+
         # 4. Generate response via LLM
-        if reranked_chunks:
+        if expanded_chunks:
             answer = await self.llm_service.generate_response(
                 query=request.query,
-                context_chunks=reranked_chunks,
+                context_chunks=expanded_chunks,
             )
         else:
             answer = "I couldn't find relevant information in the indexed documents."
@@ -71,5 +99,5 @@ class RAGPipelineService:
         return QueryResponse(
             query=request.query,
             answer=answer,
-            source_chunks=reranked_chunks,
+            source_chunks=expanded_chunks,
         )

@@ -1,5 +1,6 @@
 from functools import lru_cache
 from src.core.config import get_settings
+from src.core.exceptions import ConfigurationError
 from src.domains.documents.repositories import VectorRepository
 from src.domains.documents.splitters import TextSplitterService
 from src.domains.documents.service import DocumentService
@@ -22,9 +23,13 @@ def get_vector_repository() -> VectorRepository:
             host=settings.VECTOR_STORE_HOST,
             port=settings.VECTOR_STORE_PORT,
             collection_name=settings.VECTOR_STORE_COLLECTION,
-            api_key=settings.VECTOR_STORE_API_KEY,
+            api_key=(
+                settings.VECTOR_STORE_API_KEY.get_secret_value()
+                if settings.VECTOR_STORE_API_KEY
+                else None
+            ),
         )
-    raise ValueError(f"Unsupported vector store provider: {settings.VECTOR_STORE_PROVIDER}")
+    raise ConfigurationError(f"Unsupported vector store provider: {settings.VECTOR_STORE_PROVIDER}")
 
 
 @lru_cache
@@ -33,7 +38,7 @@ def get_embedding_service() -> EmbeddingService:
     # Factory logic based on EMBEDDING_PROVIDER
     if settings.EMBEDDING_PROVIDER.lower() == "fastembed":
         return FastEmbedService(model_name=settings.EMBEDDING_MODEL)
-    raise ValueError(f"Unsupported embedding provider: {settings.EMBEDDING_PROVIDER}")
+    raise ConfigurationError(f"Unsupported embedding provider: {settings.EMBEDDING_PROVIDER}")
 
 
 @lru_cache
@@ -42,7 +47,7 @@ def get_reranker_service() -> RerankerService:
     # Factory logic based on RERANKER_PROVIDER
     if settings.RERANKER_PROVIDER.lower() == "flashrank":
         return FlashRankReranker(model_name=settings.RERANKER_MODEL)
-    raise ValueError(f"Unsupported reranker provider: {settings.RERANKER_PROVIDER}")
+    raise ConfigurationError(f"Unsupported reranker provider: {settings.RERANKER_PROVIDER}")
 
 
 @lru_cache
@@ -51,10 +56,12 @@ def get_llm_service() -> LLMService:
     # Factory logic based on LLM_PROVIDER
     if settings.LLM_PROVIDER.lower() == "gemini":
         return GeminiLLMService(
-            api_key=settings.LLM_API_KEY,
+            api_key=settings.LLM_API_KEY.get_secret_value() if settings.LLM_API_KEY else "",
             model_name=settings.LLM_MODEL,
+            timeout_seconds=settings.LLM_TIMEOUT_SECONDS,
+            system_prompt=settings.LLM_SYSTEM_PROMPT,
         )
-    raise ValueError(f"Unsupported LLM provider: {settings.LLM_PROVIDER}")
+    raise ConfigurationError(f"Unsupported LLM provider: {settings.LLM_PROVIDER}")
 
 
 @lru_cache
@@ -67,6 +74,10 @@ def get_document_service() -> DocumentService:
         vector_repository=get_vector_repository(),
         embedding_service=get_embedding_service(),
         splitter_service=get_splitter_service(),
+        chunk_size=get_settings().CHUNK_SIZE,
+        chunk_overlap=get_settings().CHUNK_OVERLAP,
+        max_chunks=get_settings().MAX_CHUNKS_PER_DOCUMENT,
+        max_upload_size=get_settings().MAX_UPLOAD_SIZE_BYTES,
     )
 
 

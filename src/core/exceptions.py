@@ -18,3 +18,18 @@ class VectorStoreError(AppException):
 class LLMGenerationError(AppException):
     """Raised when Gemini generation fails."""
     pass
+
+
+class EmbeddingError(AppException):
+    """Raised when embedding generation fails."""
+    pass
+
+
+class RerankerError(AppException):
+    """Raised when reranking fails."""
+    pass
+
+
+class ConfigurationError(AppException):
+    """Raised when application configuration is invalid."""
+    pass

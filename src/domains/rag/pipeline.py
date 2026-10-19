@@ -1,3 +1,4 @@
+import asyncio
 from typing import List
 from src.domains.rag.schemas import QueryRequest, QueryResponse, SearchResultChunk
 from src.domains.rag.service import EmbeddingService, RerankerService, LLMService
@@ -26,7 +27,7 @@ class RAGPipelineService:
         5. Return structured answer and source chunks
         """
         # 1. Embed query
-        query_vector = self.embedding_service.embed_query(request.query)
+        query_vector = await asyncio.to_thread(self.embedding_service.embed_query, request.query)
 
         # 2. Vector search candidates
         retrieved_chunks = await self.vector_repo.search(
@@ -41,7 +42,7 @@ class RAGPipelineService:
                 chunk_id=chunk.chunk_id,
                 document_id=chunk.document_id,
                 content=chunk.content,
-                score=float(chunk.metadata.get("score", 0.0)),
+                score=chunk.score if chunk.score is not None else 0.0,
                 metadata=chunk.metadata,
             )
             for chunk in retrieved_chunks
@@ -50,17 +51,21 @@ class RAGPipelineService:
         # 3. Rerank candidate chunks
         reranked_chunks: List[SearchResultChunk] = []
         if candidate_search_chunks:
-            reranked_chunks = self.reranker_service.rerank(
+            reranked_chunks = await asyncio.to_thread(
+                self.reranker_service.rerank,
                 query=request.query,
                 documents=candidate_search_chunks,
                 top_n=request.rerank_top_k,
             )
 
         # 4. Generate response via LLM
-        answer = await self.llm_service.generate_response(
-            query=request.query,
-            context_chunks=reranked_chunks,
-        )
+        if reranked_chunks:
+            answer = await self.llm_service.generate_response(
+                query=request.query,
+                context_chunks=reranked_chunks,
+            )
+        else:
+            answer = "I couldn't find relevant information in the indexed documents."
 
         # 5. Return complete QueryResponse
         return QueryResponse(

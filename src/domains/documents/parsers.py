@@ -1,9 +1,18 @@
 import io
 from abc import ABC, abstractmethod
+from pathlib import PurePath
 from typing import BinaryIO
-from pypdf import PdfReader
+
 from docx import Document
+from pypdf import PdfReader
+
 from src.core.exceptions import DocumentProcessingError
+
+
+def sanitize_filename(filename: str) -> str:
+    basename = filename.replace("\\", "/").rsplit("/", 1)[-1]
+    printable = "".join(character for character in basename if character.isprintable())
+    return printable.strip()[:255]
 
 
 class DocumentParser(ABC):
@@ -46,9 +55,8 @@ class DocxParser(DocumentParser):
 class TextParser(DocumentParser):
     def parse(self, file_content: BinaryIO | bytes, filename: str) -> str:
         try:
-            if isinstance(file_content, bytes):
-                return file_content.decode("utf-8", errors="ignore")
-            return file_content.read().decode("utf-8", errors="ignore")
+            content = file_content if isinstance(file_content, bytes) else file_content.read()
+            return content.decode("utf-8", errors="replace")
         except Exception as e:
             raise DocumentProcessingError(f"Failed to parse text file '{filename}': {str(e)}") from e
 
@@ -56,11 +64,11 @@ class TextParser(DocumentParser):
 class ParserFactory:
     @staticmethod
     def get_parser(filename: str) -> DocumentParser:
-        ext = filename.split(".")[-1].lower() if "." in filename else ""
-        if ext == "pdf":
+        ext = PurePath(filename.replace("\\", "/")).suffix.lower()
+        if ext == ".pdf":
             return PDFParser()
-        elif ext in ["docx", "doc"]:
+        elif ext == ".docx":
             return DocxParser()
-        elif ext in ["txt", "md", ""]:
+        elif ext in [".txt", ".md"]:
             return TextParser()
-        raise ValueError(f"Unsupported file format: {ext}")
+        raise DocumentProcessingError(f"Unsupported file format: {ext or 'missing extension'}")
